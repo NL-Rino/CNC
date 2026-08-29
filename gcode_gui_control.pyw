@@ -656,7 +656,9 @@ class GCodeApp:
         dy = su_kien.y - self._chuot_truoc[1]
         self._chuot_truoc = (su_kien.x, su_kien.y)
         self.goc_yaw += dx * 0.01
-        self.goc_pitch = max(-1.4, min(1.4, self.goc_pitch + dy * 0.01))
+        # Keo chuot LEN thi ong nghieng LEN theo (dau tru) - keo xuong thi nghieng
+        # xuong. Neu de dau cong se thay nguoc voi chieu tay keo.
+        self.goc_pitch = max(-1.4, min(1.4, self.goc_pitch - dy * 0.01))
         self._ve_3d()
 
     def _lan_chuot_3d(self, su_kien):
