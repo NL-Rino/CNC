@@ -205,6 +205,26 @@ class SettingsApp:
         ttk.Label(khung, text="quay 1 vong thi ong di duoc bao nhieu mm\n   (vi du 0.2 vong = 1mm  =>  5.0)",
                   foreground="#666").grid(row=1, column=3, padx=6, pady=8, sticky="w")
 
+        khung_ramp = ttk.LabelFrame(tab, text="Tang toc khi CAT (ap dung ngay)")
+        khung_ramp.pack(fill="x", padx=8, pady=6)
+
+        self.bien_ramp_cat = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            khung_ramp,
+            text="Cho doan CAT tang toc dan (mac dinh TAT)",
+            variable=self.bien_ramp_cat, command=self._gui_ramp_cat
+        ).pack(anchor="w", padx=8, pady=(6, 2))
+
+        ttk.Label(
+            khung_ramp,
+            text="TAT (khuyen dung): doan cat chay dung toc do ngay tu xung dau tien, mep cat\n"
+                 "dep, khong bi chay qua o diem bat dau. Cac doan G0 / JOG / ve goc van tang\n"
+                 "giam toc binh thuong.\n"
+                 "BAT: chi bat khi dong co bi RU / MAT BUOC luc vao cat (thieu mo-men). Doi lai\n"
+                 "diem bat dau duong cat se bi chay qua vi dao dau chay cham.",
+            justify="left", foreground="#666"
+        ).pack(anchor="w", padx=8, pady=(0, 8))
+
         ttk.Label(
             tab,
             text="Cach kiem tra nhanh: dat goc (ZERO) o file van hanh, cho chay JOG X 100mm,\n"
@@ -330,6 +350,8 @@ class SettingsApp:
         elif ten in ("dao_keo_a", "dao_keo_b", "dao_xoay"):
             ma = {"dao_keo_a": "KEOA", "dao_keo_b": "KEOB", "dao_xoay": "XOAY"}[ten]
             self.bien_dao[ma].set(gia_tri == "1")
+        elif ten == "ramp_khi_cat":
+            self.bien_ramp_cat.set(gia_tri == "1")
 
     # ---------------------------------------------------------
     # GUI LENH
@@ -382,6 +404,9 @@ class SettingsApp:
 
     def _gui_dao(self, ma, var):
         self._gui_qua_serial(f"CFG;DAO;{ma};{1 if var.get() else 0}")
+
+    def _gui_ramp_cat(self):
+        self._gui_qua_serial(f"CFG;RAMP;CAT;{1 if self.bien_ramp_cat.get() else 0}")
 
     def _xac_nhan_reboot(self):
         if messagebox.askyesno("Xac nhan khoi dong lai",
