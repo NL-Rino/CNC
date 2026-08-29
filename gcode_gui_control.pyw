@@ -577,36 +577,72 @@ class GCodeApp:
         thanh = ttk.Frame(tab)
         thanh.pack(fill="x", padx=5, pady=(5, 0))
         ttk.Label(thanh, text="Duong kinh ong (mm):").pack(side="left")
-        self.entry_duong_kinh = ttk.Entry(thanh, width=7)
+        self.entry_duong_kinh = ttk.Entry(thanh, width=6)
         self.entry_duong_kinh.insert(0, "60")
-        self.entry_duong_kinh.pack(side="left", padx=(4, 10))
-        ttk.Button(thanh, text="Ve lai", command=self._ve_3d).pack(side="left")
-        ttk.Button(thanh, text="Goc nhin mac dinh",
-                   command=self._dat_lai_goc_nhin_3d).pack(side="left", padx=6)
-        ttk.Label(thanh, text="  Keo chuot trai de XOAY  |  lan chuot de PHONG TO",
-                  foreground="#555555").pack(side="left", padx=8)
+        self.entry_duong_kinh.pack(side="left", padx=(4, 8))
+        self.entry_duong_kinh.bind("<Return>", lambda e: self._ve_3d())
 
-        self.canvas_3d = tk.Canvas(tab, bg="white", height=120, highlightthickness=1,
+        self.btn_chay_mo_phong = ttk.Button(thanh, text="▶ Chay mo phong",
+                                            command=self._bat_tat_mo_phong)
+        self.btn_chay_mo_phong.pack(side="left", padx=(0, 6))
+        ttk.Button(thanh, text="Goc nhin mac dinh",
+                   command=self._dat_lai_goc_nhin_3d).pack(side="left", padx=(0, 6))
+
+        self.bien_tien_do = tk.DoubleVar(value=100.0)
+        ttk.Scale(thanh, from_=0, to=100, variable=self.bien_tien_do,
+                  command=lambda v: self._ve_3d(), length=170).pack(side="left", padx=4)
+        self.lbl_tien_do = ttk.Label(thanh, text="100%", width=5, font=("Consolas", 9))
+        self.lbl_tien_do.pack(side="left")
+
+        ttk.Label(thanh, text="  Keo chuot de xoay, lan chuot de phong to",
+                  foreground="#555555").pack(side="left", padx=6)
+
+        self.canvas_3d = tk.Canvas(tab, bg="#f7f9fb", height=120, highlightthickness=1,
                                    highlightbackground="#cccccc")
         self.canvas_3d.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Goc nhin: xoay quanh truc doc (yaw) va truc ngang (pitch), theo radian
-        self.goc_yaw = math.radians(28)
-        self.goc_pitch = math.radians(20)
+        self.goc_yaw = math.radians(32)
+        self.goc_pitch = math.radians(22)
         self.ty_le_3d = 1.0
         self._chuot_truoc = None
+        self.dang_chay_mo_phong = False
 
         self.canvas_3d.bind("<Configure>", lambda e: self._ve_3d())
         self.canvas_3d.bind("<ButtonPress-1>", self._chuot_nhan_3d)
         self.canvas_3d.bind("<B1-Motion>", self._chuot_keo_3d)
         self.canvas_3d.bind("<ButtonRelease-1>", lambda e: setattr(self, "_chuot_truoc", None))
-        self.canvas_3d.bind("<MouseWheel>", self._lan_chuot_3d)          # Windows
+        self.canvas_3d.bind("<MouseWheel>", self._lan_chuot_3d)           # Windows
         self.canvas_3d.bind("<Button-4>", lambda e: self._phong_3d(1.1))  # Linux
         self.canvas_3d.bind("<Button-5>", lambda e: self._phong_3d(1 / 1.1))
 
+    # ----- Chay mo phong (dien lai duong cat theo thu tu that) -----
+    def _bat_tat_mo_phong(self):
+        self.dang_chay_mo_phong = not self.dang_chay_mo_phong
+        if self.dang_chay_mo_phong:
+            self.btn_chay_mo_phong.config(text="⏸ Dung mo phong")
+            if self.bien_tien_do.get() >= 99.9:
+                self.bien_tien_do.set(0.0)
+            self._buoc_mo_phong()
+        else:
+            self.btn_chay_mo_phong.config(text="▶ Chay mo phong")
+
+    def _buoc_mo_phong(self):
+        if not self.dang_chay_mo_phong:
+            return
+        tien = self.bien_tien_do.get() + 1.5
+        if tien >= 100.0:
+            tien = 100.0
+            self.dang_chay_mo_phong = False
+            self.btn_chay_mo_phong.config(text="▶ Chay mo phong")
+        self.bien_tien_do.set(tien)
+        self._ve_3d()
+        if self.dang_chay_mo_phong:
+            self.root.after(60, self._buoc_mo_phong)
+
     def _dat_lai_goc_nhin_3d(self):
-        self.goc_yaw = math.radians(28)
-        self.goc_pitch = math.radians(20)
+        self.goc_yaw = math.radians(32)
+        self.goc_pitch = math.radians(22)
         self.ty_le_3d = 1.0
         self._ve_3d()
 
@@ -630,17 +666,24 @@ class GCodeApp:
         self.ty_le_3d = max(0.2, min(6.0, self.ty_le_3d * he_so))
         self._ve_3d()
 
-    def _chieu_3d(self, x, y, z, tam_x, tam_y, ty_le, x_giua):
-        """Chieu diem 3D (x doc theo ong, y/z tren mat cat) xuong man hinh."""
+    # ----- Phep chieu 3D -----
+    def _quay_3d(self, x, y, z):
+        """Quay diem (x doc ong, y/z tren mat cat) theo goc nhin. Tra ve (x', y', do_sau)."""
         cy, sy = math.cos(self.goc_yaw), math.sin(self.goc_yaw)
         cp, sp = math.cos(self.goc_pitch), math.sin(self.goc_pitch)
-        xt = x - x_giua
-        # xoay quanh truc thang dung (yaw)
-        x1 = xt * cy - z * sy
-        z1 = xt * sy + z * cy
-        # xoay quanh truc ngang (pitch)
+        x1 = x * cy - z * sy
+        z1 = x * sy + z * cy
         y2 = y * cp - z1 * sp
-        return tam_x + x1 * ty_le, tam_y - y2 * ty_le
+        z2 = y * sp + z1 * cp     # do sau: cang lon cang GAN mat nguoi xem
+        return x1, y2, z2
+
+    def _mau_to_bong(self, sang):
+        """sang 0..1 -> ma mau xam xanh kim loai."""
+        sang = max(0.0, min(1.0, sang))
+        do = int(96 + 120 * sang)
+        xanh_la = int(108 + 122 * sang)
+        xanh_duong = int(122 + 128 * sang)
+        return f"#{do:02x}{xanh_la:02x}{xanh_duong:02x}"
 
     def _ve_3d(self):
         canvas = self.canvas_3d
@@ -665,57 +708,97 @@ class GCodeApp:
 
         cac_x = [d[0] for d in kq.doan] + [d[2] for d in kq.doan]
         x_min, x_max = min(cac_x), max(cac_x)
-        # Ve du ong dai hon duong cat mot chut cho de nhin
-        dem = max((x_max - x_min) * 0.15, ban_kinh * 0.5)
+        dem = max((x_max - x_min) * 0.18, ban_kinh * 0.6)
         ong_dau, ong_cuoi = x_min - dem, x_max + dem
         x_giua = (ong_dau + ong_cuoi) / 2.0
 
-        # Tu chon ty le sao cho ca ong vua khung
         do_lon = max(ong_cuoi - ong_dau, ban_kinh * 2) or 1.0
-        ty_le = (min(rong, cao * 1.8) * 0.42 / do_lon) * self.ty_le_3d
+        ty_le = (min(rong, cao * 1.9) * 0.40 / do_lon) * self.ty_le_3d
         tam_x, tam_y = rong / 2, cao / 2
 
-        def diem(x, goc_do):
-            """(x mm doc ong, A do) -> toa do man hinh tren MAT NGOAI ong."""
+        def chieu(x, goc_do):
+            """(x mm doc ong, A do) -> (toa do man hinh, do sau, do sang)"""
             g = math.radians(goc_do)
-            return self._chieu_3d(x, ban_kinh * math.cos(g), ban_kinh * math.sin(g),
-                                  tam_x, tam_y, ty_le, x_giua)
+            phap_y, phap_z = math.cos(g), math.sin(g)   # phap tuyen mat ong
+            x1, y2, z2 = self._quay_3d(x - x_giua, ban_kinh * phap_y, ban_kinh * phap_z)
+            _, ny, nz = self._quay_3d(0.0, phap_y, phap_z)
+            # Nguon sang cheo tu tren-truoc
+            sang = 0.30 * ny + 0.85 * nz
+            return (tam_x + x1 * ty_le, tam_y - y2 * ty_le), z2, sang
 
-        # ----- Khung day ong: cac duong tron quanh chu vi -----
-        so_vong = 9
-        for i in range(so_vong):
-            x = ong_dau + (ong_cuoi - ong_dau) * i / (so_vong - 1)
-            diem_vong = [diem(x, g) for g in range(0, 361, 12)]
-            mau = "#b8c4d0" if 0 < i < so_vong - 1 else "#8794a3"
-            canvas.create_line(diem_vong, fill=mau, width=1)
+        # ================= VE THAN ONG TO BONG (thuat toan hoa si) =================
+        so_vanh = 26          # so mieng quanh chu vi
+        so_doi = 14           # so mieng doc than ong
+        buoc_goc = 360.0 / so_vanh
+        mat = []
+        for i in range(so_doi):
+            xa = ong_dau + (ong_cuoi - ong_dau) * i / so_doi
+            xb = ong_dau + (ong_cuoi - ong_dau) * (i + 1) / so_doi
+            for j in range(so_vanh):
+                ga, gb = j * buoc_goc, (j + 1) * buoc_goc
+                p1, z1, s1 = chieu(xa, ga)
+                p2, z2, _ = chieu(xa, gb)
+                p3, z3, _ = chieu(xb, gb)
+                p4, z4, _ = chieu(xb, ga)
+                mat.append(((z1 + z2 + z3 + z4) / 4.0, [p1, p2, p3, p4], s1))
+        mat.sort(key=lambda m: m[0])          # ve mat XA truoc, mat GAN sau
+        for _, diem, sang in mat:
+            mau = self._mau_to_bong(sang)
+            canvas.create_polygon([toa for p in diem for toa in p],
+                                  fill=mau, outline=mau)
 
-        # ----- Cac duong sinh doc theo than ong -----
-        for goc in range(0, 360, 30):
-            canvas.create_line([diem(ong_dau, goc), diem(ong_cuoi, goc)],
-                               fill="#dde3e9", width=1)
+        # ----- Vanh mieng ong 2 dau cho ro hinh khoi -----
+        for x_mieng in (ong_dau, ong_cuoi):
+            vanh = [chieu(x_mieng, g)[0] for g in range(0, 361, 8)]
+            canvas.create_line(vanh, fill="#5a6b7d", width=1)
 
-        # ----- Duong cat bam tren mat ong -----
-        for la_cat_can_ve in (False, True):
-            for x1, a1, x2, a2 in ((d[0], d[1], d[2], d[3]) for d in kq.doan
-                                   if d[4] == la_cat_can_ve):
-                # Chia nho doan de duong bam theo mat cong cua ong
-                buoc = max(2, int(abs(a2 - a1) / 6) + 1)
-                cac_diem = [diem(x1 + (x2 - x1) * t / buoc, a1 + (a2 - a1) * t / buoc)
-                            for t in range(buoc + 1)]
-                if la_cat_can_ve:
-                    canvas.create_line(cac_diem, fill="#d62828", width=2)
-                else:
-                    canvas.create_line(cac_diem, fill="#9aa0a6", width=1, dash=(4, 3))
+        # ================= VE DUONG CAT BAM TREN MAT ONG =================
+        # Chia nho tung doan de duong bam theo mat cong, va tach ro phan NAM
+        # PHIA TRUOC (nhin thay) voi phan VONG RA SAU ong (bi che khuat)
+        tien_do = self.bien_tien_do.get() / 100.0
+        self.lbl_tien_do.config(text=f"{int(tien_do * 100)}%")
+
+        cac_diem = []      # (toa do man hinh, nhin thay?, la doan cat?)
+        for x1, a1, x2, a2, la_cat in kq.doan:
+            buoc = max(2, int(max(abs(a2 - a1) / 5.0, abs(x2 - x1) / 2.0)) + 1)
+            for t in range(buoc + 1):
+                ti_le = t / buoc
+                p, _, sang = chieu(x1 + (x2 - x1) * ti_le, a1 + (a2 - a1) * ti_le)
+                cac_diem.append((p, sang > 0.12, la_cat))
+
+        so_ve = max(2, int(len(cac_diem) * tien_do)) if cac_diem else 0
+        for k in range(1, so_ve):
+            (pa, hien_a, cat_a) = cac_diem[k - 1]
+            (pb, hien_b, _) = cac_diem[k]
+            nhin_thay = hien_a and hien_b
+            if cat_a:
+                mau, day, net = ("#d62828", 3, None) if nhin_thay else ("#f0a0a0", 2, (3, 3))
+            else:
+                mau, day, net = ("#7c8894", 1, (4, 3)) if nhin_thay else ("#c3cad1", 1, (2, 4))
+            canvas.create_line(pa[0], pa[1], pb[0], pb[1], fill=mau, width=day,
+                               dash=net) if net else \
+                canvas.create_line(pa[0], pa[1], pb[0], pb[1], fill=mau, width=day)
+
+        # ----- Dau cat: vi tri hien tai trong mo phong -----
+        if 0 < so_ve <= len(cac_diem):
+            px, py = cac_diem[so_ve - 1][0]
+            canvas.create_oval(px - 7, py - 7, px + 7, py + 7,
+                               outline="#0b5cad", width=2)
+            canvas.create_oval(px - 3, py - 3, px + 3, py + 3,
+                               fill="#0b5cad", outline="")
 
         # ----- Diem moi (M3) -----
         for gx, ga in kq.diem_moi:
-            px, py = diem(gx, ga)
-            canvas.create_oval(px - 4, py - 4, px + 4, py + 4,
-                               fill="#f0ad4e", outline="#a06800")
+            p, _, sang = chieu(gx, ga)
+            if sang > 0.12:
+                canvas.create_oval(p[0] - 4, p[1] - 4, p[0] + 4, p[1] + 4,
+                                   fill="#f0ad4e", outline="#a06800")
 
-        canvas.create_text(8, 8, anchor="nw", fill="#555555", font=("Segoe UI", 8),
-                           text=f"Ong D{ban_kinh * 2:g}mm   |   duong cat dai theo X: "
+        canvas.create_text(8, 6, anchor="nw", fill="#44515e", font=("Segoe UI", 8),
+                           text=f"Ong D{ban_kinh * 2:g}mm    duong cat X: "
                                 f"{x_min:.1f} -> {x_max:.1f} mm")
+        canvas.create_text(8, cao - 6, anchor="sw", fill="#7a8792", font=("Segoe UI", 8),
+                           text="Do dam = duong cat mat truoc    Do nhat = vong ra mat sau ong")
 
     def _dung_khung_toc_do(self, pad):
         khung = ttk.LabelFrame(self.root, text="Toc do (F - RPM dong co)")

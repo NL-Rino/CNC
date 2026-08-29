@@ -1,0 +1,86 @@
+name: Dong goi file EXE cho Windows
+
+# Chay tu dong moi khi co thay doi phan mem, hoac bam nut chay tay trong tab Actions.
+# Ket qua: 2 file .exe chay doc lap, tai ve o muc Releases hoac o phan Artifacts
+# cua lan chay.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - claude/plasma-cnc-firmware-5obgaw
+    paths:
+      - "**.pyw"
+      - ".github/workflows/build-exe.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  dong-goi:
+    runs-on: windows-latest
+
+    steps:
+      - name: Lay ma nguon
+        uses: actions/checkout@v4
+
+      - name: Cai Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cai cac goi can thiet
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyserial pyinstaller
+
+      - name: Kiem tra cu phap 2 file phan mem
+        run: |
+          python -m py_compile gcode_gui_control.pyw
+          python -m py_compile cnc_settings.pyw
+
+      - name: Dong goi phan mem VAN HANH
+        run: >
+          python -m PyInstaller --onefile --windowed --noconfirm
+          --name MayCatOng
+          --hidden-import serial.tools.list_ports
+          gcode_gui_control.pyw
+
+      - name: Dong goi phan mem CAI DAT
+        run: >
+          python -m PyInstaller --onefile --windowed --noconfirm
+          --name MayCatOng_CaiDat
+          --hidden-import serial.tools.list_ports
+          cnc_settings.pyw
+
+      - name: Kiem tra 2 file exe da tao ra
+        shell: pwsh
+        run: |
+          Get-ChildItem dist
+          if (-not (Test-Path dist/MayCatOng.exe)) { throw "Thieu MayCatOng.exe" }
+          if (-not (Test-Path dist/MayCatOng_CaiDat.exe)) { throw "Thieu MayCatOng_CaiDat.exe" }
+
+      - name: Tai file len phan Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MayCatOng-windows-exe
+          path: dist/*.exe
+          retention-days: 90
+
+      - name: Tao ban phat hanh de tai ve truc tiep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "exe-${{ github.run_number }}" \
+            dist/MayCatOng.exe dist/MayCatOng_CaiDat.exe \
+            --target "${{ github.sha }}" \
+            --title "Phan mem may cat ong - ban ${{ github.run_number }}" \
+            --notes "Hai file chay doc lap cho Windows, KHONG can cai Python.
+
+          - **MayCatOng.exe** - phan mem van hanh hang ngay (nap G-code, xem truoc, mo phong 3D, jog, chay/dung)
+          - **MayCatOng_CaiDat.exe** - phan mem cai dat nang cao (chan GPIO, hieu chuan, dao chieu truc)
+
+          Tai ve, chay truc tiep. Windows Defender co the canh bao file exe moi tao:
+          chon **More info** roi **Run anyway**.
+
+          Nho nap lai firmware trong \`main/main.c\` cho ESP32 de dung duoc day du tinh nang."
