@@ -56,7 +56,7 @@
  *   Day la lop bao ve MUC PHAN MEM. KHONG thay the relay an toan phan cung
  *   cat nguon dong luc truc tiep tren duong EMG that.
  *
- * SO DO CHAN (ESP32 DEVKIT GOC):
+ * SO DO CHAN MAC DINH (ESP32 DEVKIT GOC) - co the doi bang lenh CFG;PIN;...:
  *   PUL_KEO_A = GPIO4    DIR_KEO_A = GPIO13
  *   PUL_KEO_B = GPIO14   DIR_KEO_B = GPIO16
  *   PUL_XOAY  = GPIO25   DIR_XOAY  = GPIO26
@@ -65,6 +65,14 @@
  *   PLC_IN_START/STOP/EMG/LIMIT = GPIO23/27/32/33
  *   (Khong dung chan ENA cho ca 3 driver - dong co luon giu phanh,
  *    khong bao gio nha phanh qua phan mem)
+ *
+ * CAI DAT NANG CAO QUA LENH CFG (xem chi tiet o dinh nghia cau_hinh_t):
+ *   CFG;GET                       xem toan bo cau hinh hien tai
+ *   CFG;PIN;<TEN>;<so_gpio>       doi 1 chan (can CFG;SAVE + CFG;REBOOT)
+ *   CFG;CAL;MICROSTEP;<so>        doi so xung/vong dong co (ap dung ngay)
+ *   CFG;CAL;MMVONG;<so>           doi mm/vong truc keo (ap dung ngay)
+ *   CFG;DAO;<KEOA|KEOB|XOAY>;<0|1> dao chieu 1 truc (ap dung ngay)
+ *   CFG;SAVE / CFG;RESET / CFG;REBOOT   luu / xoa ve mac dinh / khoi dong lai
  *
  * LUU Y KHI BUILD: dung "idf.py set-target esp32"
  */
@@ -84,32 +92,40 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"   // esp_rom_delay_us
+#include "esp_system.h"    // esp_restart
+#include "nvs_flash.h"
+#include "nvs.h"
 
 #define UART_PC UART_NUM_0
 
-// ================== DINH NGHIA CHAN GPIO (ESP32 DEVKIT GOC) ==================
-#define PUL_KEO_A       GPIO_NUM_4
-#define DIR_KEO_A       GPIO_NUM_13
-#define PUL_KEO_B       GPIO_NUM_14
-#define DIR_KEO_B       GPIO_NUM_16
-#define PUL_XOAY        GPIO_NUM_25
-#define DIR_XOAY        GPIO_NUM_26
+// ================== CHAN GPIO / HIEU CHUAN MAC DINH ==================
+// Day la gia tri MAC DINH dung khi chua co cau hinh nao luu trong NVS (flash).
+// Cau hinh THUC TE dang chay nam trong bien g_cfg (co the doi bang lenh
+// CFG;... qua Serial va luu lai bang CFG;SAVE - xem phan CAU HINH RUNTIME).
+#define DEFAULT_PUL_KEO_A       GPIO_NUM_4
+#define DEFAULT_DIR_KEO_A       GPIO_NUM_13
+#define DEFAULT_PUL_KEO_B       GPIO_NUM_14
+#define DEFAULT_DIR_KEO_B       GPIO_NUM_16
+#define DEFAULT_PUL_XOAY        GPIO_NUM_25
+#define DEFAULT_DIR_XOAY        GPIO_NUM_26
 
-#define RELAY_PLASMA    GPIO_NUM_19
+#define DEFAULT_RELAY_PLASMA    GPIO_NUM_19
 
-#define PLC_IN_START    GPIO_NUM_23
-#define PLC_IN_STOP     GPIO_NUM_27
-#define PLC_IN_EMG      GPIO_NUM_32
-#define PLC_IN_LIMIT    GPIO_NUM_33
+#define DEFAULT_PLC_IN_START    GPIO_NUM_23
+#define DEFAULT_PLC_IN_STOP     GPIO_NUM_27
+#define DEFAULT_PLC_IN_EMG      GPIO_NUM_32
+#define DEFAULT_PLC_IN_LIMIT    GPIO_NUM_33
 
-#define PLC_OUT_READY   GPIO_NUM_17
-#define PLC_OUT_RUNNING GPIO_NUM_18
-#define PLC_OUT_DONE    GPIO_NUM_21
-#define PLC_OUT_FAULT   GPIO_NUM_22
+#define DEFAULT_PLC_OUT_READY   GPIO_NUM_17
+#define DEFAULT_PLC_OUT_RUNNING GPIO_NUM_18
+#define DEFAULT_PLC_OUT_DONE    GPIO_NUM_21
+#define DEFAULT_PLC_OUT_FAULT   GPIO_NUM_22
 
-#define MICROSTEP_MOI_VONG    1600.0
+// So xung dong co can de quay 1 vong (= vi buoc driver x so buoc/vong dong co,
+// vi du dong co 200 buoc/vong, vi buoc 1/8 => 1600 xung/vong)
+#define DEFAULT_MICROSTEP_MOI_VONG    1600.0
 // Truc X (KEO): 0.2 vong = 1mm  =>  1 vong = 5mm
-#define MM_MOI_VONG_TRUC_X    5.0
+#define DEFAULT_MM_MOI_VONG_TRUC_X    5.0
 #define CHU_KY_TOI_THIEU_US   30
 #define MAX_BUOC_CHUONG_TRINH 300
 #define RPM_HOME_MAC_DINH     20.0
@@ -122,6 +138,160 @@
 #define HE_SO_CHAM_LUC_DAU    4      // luc bat dau chay cham gap N lan toc do dat
 
 static const char *TAG = "MAY_CAT_ONG";
+
+// ================== CAU HINH RUNTIME (luu trong NVS - flash) ==================
+// Toan bo chan GPIO va he so hieu chuan co the doi bang lenh CFG;... tu file
+// setting (cnc_settings.pyw) qua Serial, khong can build lai firmware.
+// - CFG;PIN;<TEN>;<so_gpio>   doi 1 chan (can CFG;SAVE + khoi dong lai ESP32
+//                              de ap dung, vi lien quan gpio_config()/ISR)
+// - CFG;CAL;MICROSTEP;<so>    doi so xung/vong (ap dung NGAY, khong can reboot)
+// - CFG;CAL;MMVONG;<so>       doi mm/vong truc keo (ap dung NGAY)
+// - CFG;DAO;<KEOA|KEOB|XOAY>;<0|1>   dao chieu 1 truc (ap dung NGAY)
+// - CFG;SAVE                  luu cau hinh hien tai vao flash (NVS)
+// - CFG;RESET                 xoa NVS, ve mac dinh (can khoi dong lai)
+// - CFG;REBOOT                khoi dong lai ESP32 (de ap dung chan GPIO moi)
+// - CFG;GET                   in toan bo cau hinh hien tai
+typedef struct {
+    int pin_pul_keo_a, pin_dir_keo_a;
+    int pin_pul_keo_b, pin_dir_keo_b;
+    int pin_pul_xoay,  pin_dir_xoay;
+    int pin_relay_plasma;
+    int pin_plc_in_start, pin_plc_in_stop, pin_plc_in_emg, pin_plc_in_limit;
+    int pin_plc_out_ready, pin_plc_out_running, pin_plc_out_done, pin_plc_out_fault;
+    double microstep_moi_vong;
+    double mm_moi_vong_truc_x;
+    bool dao_keo_a, dao_keo_b, dao_xoay;
+} cau_hinh_t;
+
+static cau_hinh_t g_cfg;
+static const char *NVS_NAMESPACE = "cnc_cfg";
+
+static void cau_hinh_dat_mac_dinh(void)
+{
+    g_cfg.pin_pul_keo_a = DEFAULT_PUL_KEO_A;
+    g_cfg.pin_dir_keo_a = DEFAULT_DIR_KEO_A;
+    g_cfg.pin_pul_keo_b = DEFAULT_PUL_KEO_B;
+    g_cfg.pin_dir_keo_b = DEFAULT_DIR_KEO_B;
+    g_cfg.pin_pul_xoay  = DEFAULT_PUL_XOAY;
+    g_cfg.pin_dir_xoay  = DEFAULT_DIR_XOAY;
+    g_cfg.pin_relay_plasma = DEFAULT_RELAY_PLASMA;
+    g_cfg.pin_plc_in_start = DEFAULT_PLC_IN_START;
+    g_cfg.pin_plc_in_stop  = DEFAULT_PLC_IN_STOP;
+    g_cfg.pin_plc_in_emg   = DEFAULT_PLC_IN_EMG;
+    g_cfg.pin_plc_in_limit = DEFAULT_PLC_IN_LIMIT;
+    g_cfg.pin_plc_out_ready   = DEFAULT_PLC_OUT_READY;
+    g_cfg.pin_plc_out_running = DEFAULT_PLC_OUT_RUNNING;
+    g_cfg.pin_plc_out_done    = DEFAULT_PLC_OUT_DONE;
+    g_cfg.pin_plc_out_fault   = DEFAULT_PLC_OUT_FAULT;
+    g_cfg.microstep_moi_vong = DEFAULT_MICROSTEP_MOI_VONG;
+    g_cfg.mm_moi_vong_truc_x = DEFAULT_MM_MOI_VONG_TRUC_X;
+    g_cfg.dao_keo_a = false;
+    g_cfg.dao_keo_b = false;
+    g_cfg.dao_xoay  = false;
+}
+
+// Doc 1 khoa i32 tu NVS, giu nguyen gia tri hien tai (mac dinh) neu chua co
+static void nvs_doc_i32(nvs_handle_t tay_cam, const char *khoa, int *ra)
+{
+    int32_t gia_tri;
+    if (nvs_get_i32(tay_cam, khoa, &gia_tri) == ESP_OK) *ra = (int)gia_tri;
+}
+
+static void nvs_doc_double(nvs_handle_t tay_cam, const char *khoa, double *ra)
+{
+    // NVS khong co kieu double truc tiep -> luu duoi dang blob co dinh 8 byte
+    double gia_tri;
+    size_t co_bytes = sizeof(gia_tri);
+    if (nvs_get_blob(tay_cam, khoa, &gia_tri, &co_bytes) == ESP_OK && co_bytes == sizeof(gia_tri)) {
+        *ra = gia_tri;
+    }
+}
+
+static void nvs_doc_bool(nvs_handle_t tay_cam, const char *khoa, bool *ra)
+{
+    uint8_t gia_tri;
+    if (nvs_get_u8(tay_cam, khoa, &gia_tri) == ESP_OK) *ra = (gia_tri != 0);
+}
+
+static void cau_hinh_doc_tu_nvs(void)
+{
+    cau_hinh_dat_mac_dinh();
+
+    nvs_handle_t tay_cam;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &tay_cam) != ESP_OK) {
+        return;  // chua tung luu -> dung mac dinh
+    }
+
+    nvs_doc_i32(tay_cam, "pul_keo_a", &g_cfg.pin_pul_keo_a);
+    nvs_doc_i32(tay_cam, "dir_keo_a", &g_cfg.pin_dir_keo_a);
+    nvs_doc_i32(tay_cam, "pul_keo_b", &g_cfg.pin_pul_keo_b);
+    nvs_doc_i32(tay_cam, "dir_keo_b", &g_cfg.pin_dir_keo_b);
+    nvs_doc_i32(tay_cam, "pul_xoay",  &g_cfg.pin_pul_xoay);
+    nvs_doc_i32(tay_cam, "dir_xoay",  &g_cfg.pin_dir_xoay);
+    nvs_doc_i32(tay_cam, "relay_plasma", &g_cfg.pin_relay_plasma);
+    nvs_doc_i32(tay_cam, "plc_in_start", &g_cfg.pin_plc_in_start);
+    nvs_doc_i32(tay_cam, "plc_in_stop",  &g_cfg.pin_plc_in_stop);
+    nvs_doc_i32(tay_cam, "plc_in_emg",   &g_cfg.pin_plc_in_emg);
+    nvs_doc_i32(tay_cam, "plc_in_limit", &g_cfg.pin_plc_in_limit);
+    nvs_doc_i32(tay_cam, "plc_out_ready",   &g_cfg.pin_plc_out_ready);
+    nvs_doc_i32(tay_cam, "plc_out_running", &g_cfg.pin_plc_out_running);
+    nvs_doc_i32(tay_cam, "plc_out_done",    &g_cfg.pin_plc_out_done);
+    nvs_doc_i32(tay_cam, "plc_out_fault",   &g_cfg.pin_plc_out_fault);
+    nvs_doc_double(tay_cam, "microstep", &g_cfg.microstep_moi_vong);
+    nvs_doc_double(tay_cam, "mm_vong",   &g_cfg.mm_moi_vong_truc_x);
+    nvs_doc_bool(tay_cam, "dao_keo_a", &g_cfg.dao_keo_a);
+    nvs_doc_bool(tay_cam, "dao_keo_b", &g_cfg.dao_keo_b);
+    nvs_doc_bool(tay_cam, "dao_xoay",  &g_cfg.dao_xoay);
+
+    nvs_close(tay_cam);
+}
+
+static bool cau_hinh_luu_vao_nvs(void)
+{
+    nvs_handle_t tay_cam;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &tay_cam) != ESP_OK) return false;
+
+    nvs_set_i32(tay_cam, "pul_keo_a", g_cfg.pin_pul_keo_a);
+    nvs_set_i32(tay_cam, "dir_keo_a", g_cfg.pin_dir_keo_a);
+    nvs_set_i32(tay_cam, "pul_keo_b", g_cfg.pin_pul_keo_b);
+    nvs_set_i32(tay_cam, "dir_keo_b", g_cfg.pin_dir_keo_b);
+    nvs_set_i32(tay_cam, "pul_xoay",  g_cfg.pin_pul_xoay);
+    nvs_set_i32(tay_cam, "dir_xoay",  g_cfg.pin_dir_xoay);
+    nvs_set_i32(tay_cam, "relay_plasma", g_cfg.pin_relay_plasma);
+    nvs_set_i32(tay_cam, "plc_in_start", g_cfg.pin_plc_in_start);
+    nvs_set_i32(tay_cam, "plc_in_stop",  g_cfg.pin_plc_in_stop);
+    nvs_set_i32(tay_cam, "plc_in_emg",   g_cfg.pin_plc_in_emg);
+    nvs_set_i32(tay_cam, "plc_in_limit", g_cfg.pin_plc_in_limit);
+    nvs_set_i32(tay_cam, "plc_out_ready",   g_cfg.pin_plc_out_ready);
+    nvs_set_i32(tay_cam, "plc_out_running", g_cfg.pin_plc_out_running);
+    nvs_set_i32(tay_cam, "plc_out_done",    g_cfg.pin_plc_out_done);
+    nvs_set_i32(tay_cam, "plc_out_fault",   g_cfg.pin_plc_out_fault);
+    nvs_set_blob(tay_cam, "microstep", &g_cfg.microstep_moi_vong, sizeof(double));
+    nvs_set_blob(tay_cam, "mm_vong",   &g_cfg.mm_moi_vong_truc_x, sizeof(double));
+    nvs_set_u8(tay_cam, "dao_keo_a", g_cfg.dao_keo_a ? 1 : 0);
+    nvs_set_u8(tay_cam, "dao_keo_b", g_cfg.dao_keo_b ? 1 : 0);
+    nvs_set_u8(tay_cam, "dao_xoay",  g_cfg.dao_xoay  ? 1 : 0);
+
+    esp_err_t loi = nvs_commit(tay_cam);
+    nvs_close(tay_cam);
+    return loi == ESP_OK;
+}
+
+static void cau_hinh_in_ra(void)
+{
+    printf("CFG: pul_keo_a=%d dir_keo_a=%d pul_keo_b=%d dir_keo_b=%d pul_xoay=%d dir_xoay=%d\n",
+           g_cfg.pin_pul_keo_a, g_cfg.pin_dir_keo_a, g_cfg.pin_pul_keo_b,
+           g_cfg.pin_dir_keo_b, g_cfg.pin_pul_xoay, g_cfg.pin_dir_xoay);
+    printf("CFG: relay_plasma=%d\n", g_cfg.pin_relay_plasma);
+    printf("CFG: plc_in_start=%d plc_in_stop=%d plc_in_emg=%d plc_in_limit=%d\n",
+           g_cfg.pin_plc_in_start, g_cfg.pin_plc_in_stop, g_cfg.pin_plc_in_emg, g_cfg.pin_plc_in_limit);
+    printf("CFG: plc_out_ready=%d plc_out_running=%d plc_out_done=%d plc_out_fault=%d\n",
+           g_cfg.pin_plc_out_ready, g_cfg.pin_plc_out_running, g_cfg.pin_plc_out_done, g_cfg.pin_plc_out_fault);
+    printf("CFG: microstep_moi_vong=%.2f mm_moi_vong_truc_x=%.4f\n",
+           g_cfg.microstep_moi_vong, g_cfg.mm_moi_vong_truc_x);
+    printf("CFG: dao_keo_a=%d dao_keo_b=%d dao_xoay=%d\n",
+           g_cfg.dao_keo_a, g_cfg.dao_keo_b, g_cfg.dao_xoay);
+}
 
 // ================== BIEN DUNG CHUNG GIUA CAC TASK ==================
 static volatile bool co_dung_khan_cap = false;  // set boi ISR (PLC/EMG/LIMIT that)
@@ -190,7 +360,8 @@ static void IRAM_ATTR trinh_xu_ly_ngat_an_toan(void *arg)
 static void cau_hinh_ngo_vao(void)
 {
     gpio_config_t cfg_an_toan = {
-        .pin_bit_mask = (1ULL << PLC_IN_STOP) | (1ULL << PLC_IN_EMG) | (1ULL << PLC_IN_LIMIT),
+        .pin_bit_mask = (1ULL << g_cfg.pin_plc_in_stop) | (1ULL << g_cfg.pin_plc_in_emg) |
+                        (1ULL << g_cfg.pin_plc_in_limit),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -199,7 +370,7 @@ static void cau_hinh_ngo_vao(void)
     gpio_config(&cfg_an_toan);
 
     gpio_config_t cfg_start = {
-        .pin_bit_mask = (1ULL << PLC_IN_START),
+        .pin_bit_mask = (1ULL << g_cfg.pin_plc_in_start),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .intr_type = GPIO_INTR_DISABLE,
@@ -207,29 +378,29 @@ static void cau_hinh_ngo_vao(void)
     gpio_config(&cfg_start);
 
     gpio_install_isr_service(0);
-    gpio_isr_handler_add(PLC_IN_STOP, trinh_xu_ly_ngat_an_toan, NULL);
-    gpio_isr_handler_add(PLC_IN_EMG, trinh_xu_ly_ngat_an_toan, NULL);
-    gpio_isr_handler_add(PLC_IN_LIMIT, trinh_xu_ly_ngat_an_toan, NULL);
+    gpio_isr_handler_add(g_cfg.pin_plc_in_stop, trinh_xu_ly_ngat_an_toan, NULL);
+    gpio_isr_handler_add(g_cfg.pin_plc_in_emg, trinh_xu_ly_ngat_an_toan, NULL);
+    gpio_isr_handler_add(g_cfg.pin_plc_in_limit, trinh_xu_ly_ngat_an_toan, NULL);
 }
 
 static void cau_hinh_ngo_ra(void)
 {
     gpio_config_t cfg_ra = {
         .pin_bit_mask =
-            (1ULL << PUL_KEO_A) | (1ULL << DIR_KEO_A) |
-            (1ULL << PUL_KEO_B) | (1ULL << DIR_KEO_B) |
-            (1ULL << PUL_XOAY)  | (1ULL << DIR_XOAY)  |
-            (1ULL << RELAY_PLASMA) |
-            (1ULL << PLC_OUT_READY) | (1ULL << PLC_OUT_RUNNING) |
-            (1ULL << PLC_OUT_DONE)  | (1ULL << PLC_OUT_FAULT),
+            (1ULL << g_cfg.pin_pul_keo_a) | (1ULL << g_cfg.pin_dir_keo_a) |
+            (1ULL << g_cfg.pin_pul_keo_b) | (1ULL << g_cfg.pin_dir_keo_b) |
+            (1ULL << g_cfg.pin_pul_xoay)  | (1ULL << g_cfg.pin_dir_xoay)  |
+            (1ULL << g_cfg.pin_relay_plasma) |
+            (1ULL << g_cfg.pin_plc_out_ready) | (1ULL << g_cfg.pin_plc_out_running) |
+            (1ULL << g_cfg.pin_plc_out_done)  | (1ULL << g_cfg.pin_plc_out_fault),
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&cfg_ra);
 
-    gpio_set_level(RELAY_PLASMA, 0);
-    gpio_set_level(PLC_OUT_RUNNING, 0);
-    gpio_set_level(PLC_OUT_DONE, 0);
-    gpio_set_level(PLC_OUT_FAULT, 0);
+    gpio_set_level(g_cfg.pin_relay_plasma, 0);
+    gpio_set_level(g_cfg.pin_plc_out_running, 0);
+    gpio_set_level(g_cfg.pin_plc_out_done, 0);
+    gpio_set_level(g_cfg.pin_plc_out_fault, 0);
 }
 
 // ================== TASK: DIEU KHIEN DONG CO ==================
@@ -267,12 +438,12 @@ static void task_dong_co(void *param)
 
         // ----- Bat / tat mo cat plasma (M3/M4/M5) -----
         if (lenh.loai == LENH_PLASMA_ON) {
-            gpio_set_level(RELAY_PLASMA, 1);
+            gpio_set_level(g_cfg.pin_relay_plasma, 1);
             printf("PLASMA_ON: da bat mo cat.\n");
             continue;
         }
         if (lenh.loai == LENH_PLASMA_OFF) {
-            gpio_set_level(RELAY_PLASMA, 0);
+            gpio_set_level(g_cfg.pin_relay_plasma, 0);
             printf("PLASMA_OFF: da tat mo cat.\n");
             continue;
         }
@@ -287,7 +458,7 @@ static void task_dong_co(void *param)
 
         // ----- Tam dung cho nguoi van hanh (M0/M1) -----
         if (lenh.loai == LENH_TAM_DUNG) {
-            gpio_set_level(RELAY_PLASMA, 0);  // AN TOAN: tat mo cat khi dung cho
+            gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung cho
             trang_thai_chay = DANG_TAM_DUNG;
             printf("M0_PAUSED: da tat mo cat, tam dung theo lenh M0/M1 tai X=%.2f A=%.2f. "
                    "Gui RESUME de chay tiep.\n", vi_tri_keo_mm, vi_tri_xoay_do);
@@ -319,17 +490,18 @@ static void task_dong_co(void *param)
         if (troi == 0) continue;
 
         // Dat chieu quay cho ca 2 truc truoc khi xuat xung
+        // (XOR voi co dao_* de bu truong hop dong co lap nguoc chieu co khi)
         if (buoc_x > 0) {
-            gpio_set_level(DIR_KEO_A, lenh.huong_x);
-            gpio_set_level(DIR_KEO_B, lenh.huong_x);
+            gpio_set_level(g_cfg.pin_dir_keo_a, lenh.huong_x ^ g_cfg.dao_keo_a);
+            gpio_set_level(g_cfg.pin_dir_keo_b, lenh.huong_x ^ g_cfg.dao_keo_b);
         }
         if (buoc_a > 0) {
-            gpio_set_level(DIR_XOAY, lenh.huong_a);
+            gpio_set_level(g_cfg.pin_dir_xoay, lenh.huong_a ^ g_cfg.dao_xoay);
         }
         esp_rom_delay_us(10);  // thoi gian setup DIR truoc PUL
 
-        gpio_set_level(PLC_OUT_RUNNING, 1);
-        gpio_set_level(PLC_OUT_DONE, 0);
+        gpio_set_level(g_cfg.pin_plc_out_running, 1);
+        gpio_set_level(g_cfg.pin_plc_out_done, 0);
 
         // Bo dem Bresenham - khoi tao giua nguong de phan bo xung deu hon
         int32_t bo_dem_x = (int32_t)(troi / 2);
@@ -372,22 +544,22 @@ static void task_dong_co(void *param)
 
             // --- Xuat xung DONG THOI cho ca 2 truc ---
             if (xung_x) {
-                gpio_set_level(PUL_KEO_A, 1);
-                gpio_set_level(PUL_KEO_B, 1);
+                gpio_set_level(g_cfg.pin_pul_keo_a, 1);
+                gpio_set_level(g_cfg.pin_pul_keo_b, 1);
             }
             if (xung_a) {
-                gpio_set_level(PUL_XOAY, 1);
+                gpio_set_level(g_cfg.pin_pul_xoay, 1);
             }
 
             esp_rom_delay_us(5);  // do rong xung HIGH
 
             if (xung_x) {
-                gpio_set_level(PUL_KEO_A, 0);
-                gpio_set_level(PUL_KEO_B, 0);
+                gpio_set_level(g_cfg.pin_pul_keo_a, 0);
+                gpio_set_level(g_cfg.pin_pul_keo_b, 0);
                 da_chay_x++;
             }
             if (xung_a) {
-                gpio_set_level(PUL_XOAY, 0);
+                gpio_set_level(g_cfg.pin_pul_xoay, 0);
                 da_chay_a++;
             }
 
@@ -411,16 +583,16 @@ static void task_dong_co(void *param)
             esp_rom_delay_us(nghi);
         }
 
-        gpio_set_level(PLC_OUT_RUNNING, 0);
+        gpio_set_level(g_cfg.pin_plc_out_running, 0);
 
         // Cap nhat vi tri THUC TE theo dung so xung da xuat cho TUNG truc
         // (chinh xac ngay ca khi bi cat giua chung boi STOP)
         if (da_chay_x > 0) {
-            double mm_da_di = ((double)da_chay_x / MICROSTEP_MOI_VONG) * MM_MOI_VONG_TRUC_X;
+            double mm_da_di = ((double)da_chay_x / g_cfg.microstep_moi_vong) * g_cfg.mm_moi_vong_truc_x;
             vi_tri_keo_mm += lenh.huong_x ? mm_da_di : -mm_da_di;
         }
         if (da_chay_a > 0) {
-            double do_da_quay = ((double)da_chay_a / MICROSTEP_MOI_VONG) * 360.0;
+            double do_da_quay = ((double)da_chay_a / g_cfg.microstep_moi_vong) * 360.0;
             vi_tri_xoay_do += lenh.huong_a ? do_da_quay : -do_da_quay;
         }
 
@@ -430,13 +602,13 @@ static void task_dong_co(void *param)
         }
 
         printf("Hoan thanh. Vi tri: X=%.2f A=%.2f\n", vi_tri_keo_mm, vi_tri_xoay_do);
-        gpio_set_level(PLC_OUT_DONE, 1);
+        gpio_set_level(g_cfg.pin_plc_out_done, 1);
 
         // Neu co yeu cau PAUSE: buoc nay da chay XONG HOAN TOAN, vi tri da
         // cap nhat chinh xac -> gio moi chuyen sang tam dung
         if (trang_thai_chay == YEU_CAU_TAM_DUNG) {
             trang_thai_chay = DANG_TAM_DUNG;
-            gpio_set_level(RELAY_PLASMA, 0);  // AN TOAN: tat mo cat khi dung
+            gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung
             printf("PAUSED: da tat mo cat, tam dung o vi tri X=%.2f A=%.2f. "
                    "Gui RESUME de chay tiep (nho bat lai mo cat neu can).\n",
                    vi_tri_keo_mm, vi_tri_xoay_do);
@@ -451,19 +623,19 @@ static void task_an_toan(void *param)
 
     while (1) {
         if (co_dung_khan_cap && !trang_thai_truoc) {
-            gpio_set_level(PLC_OUT_FAULT, 1);
-            gpio_set_level(RELAY_PLASMA, 0);
+            gpio_set_level(g_cfg.pin_plc_out_fault, 1);
+            gpio_set_level(g_cfg.pin_relay_plasma, 0);
             printf("Loi: DUNG KHAN CAP / STOP / LIMIT tu PLC duoc kich hoat.\n");
         }
         trang_thai_truoc = co_dung_khan_cap;
 
         if (co_dung_khan_cap) {
-            bool het_stop  = gpio_get_level(PLC_IN_STOP)  == 1;
-            bool het_emg   = gpio_get_level(PLC_IN_EMG)   == 1;
-            bool het_limit = gpio_get_level(PLC_IN_LIMIT) == 1;
+            bool het_stop  = gpio_get_level(g_cfg.pin_plc_in_stop)  == 1;
+            bool het_emg   = gpio_get_level(g_cfg.pin_plc_in_emg)   == 1;
+            bool het_limit = gpio_get_level(g_cfg.pin_plc_in_limit) == 1;
             if (het_stop && het_emg && het_limit) {
                 co_dung_khan_cap = false;
-                gpio_set_level(PLC_OUT_FAULT, 0);
+                gpio_set_level(g_cfg.pin_plc_out_fault, 0);
                 printf("He thong: da het dieu kien loi, san sang hoat dong tro lai.\n");
             }
         }
@@ -489,11 +661,11 @@ static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
     if (rpm <= 0) return false;
 
     // Doi sang so VONG quay cua tung dong co
-    double vong_x = co_x ? (fabs(delta_x_mm) / MM_MOI_VONG_TRUC_X) : 0.0;
+    double vong_x = co_x ? (fabs(delta_x_mm) / g_cfg.mm_moi_vong_truc_x) : 0.0;
     double vong_a = co_a ? (fabs(delta_a_do) / 360.0) : 0.0;
 
-    long buoc_x = (long)lround(vong_x * MICROSTEP_MOI_VONG);
-    long buoc_a = (long)lround(vong_a * MICROSTEP_MOI_VONG);
+    long buoc_x = (long)lround(vong_x * g_cfg.microstep_moi_vong);
+    long buoc_a = (long)lround(vong_a * g_cfg.microstep_moi_vong);
     if (buoc_x < 0) buoc_x = 0;
     if (buoc_a < 0) buoc_a = 0;
     if (buoc_x == 0 && buoc_a == 0) return false;
@@ -800,6 +972,114 @@ static void xu_ly_lenh_tu_pc(char *dong)
         return;
     }
 
+    // ----- CFG: cai dat nang cao (chan GPIO, so xung/vong, dao chieu...) -----
+    // Dung tu file setting (cnc_settings.pyw), xem chu thich o cau_hinh_t o dau file.
+    if (strncmp(dong_upper, "CFG;", 4) == 0) {
+        if (strcmp(dong_upper, "CFG;GET") == 0) {
+            cau_hinh_in_ra();
+            return;
+        }
+        if (strcmp(dong_upper, "CFG;SAVE") == 0) {
+            if (cau_hinh_luu_vao_nvs()) {
+                printf("OK_CFG: da luu cau hinh vao flash. Neu vua doi CHAN GPIO, "
+                       "gui CFG;REBOOT de ap dung.\n");
+            } else {
+                printf("Loi: khong luu duoc cau hinh vao flash.\n");
+            }
+            return;
+        }
+        if (strcmp(dong_upper, "CFG;RESET") == 0) {
+            nvs_handle_t tay_cam;
+            if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &tay_cam) == ESP_OK) {
+                nvs_erase_all(tay_cam);
+                nvs_commit(tay_cam);
+                nvs_close(tay_cam);
+            }
+            cau_hinh_dat_mac_dinh();
+            printf("OK_CFG: da xoa cau hinh flash, ve mac dinh. "
+                   "Gui CFG;REBOOT de ap dung chan GPIO mac dinh.\n");
+            return;
+        }
+        if (strcmp(dong_upper, "CFG;REBOOT") == 0) {
+            printf("OK_CFG: dang khoi dong lai ESP32...\n");
+            fflush(stdout);
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;PIN;", 8) == 0) {
+            char ten[32];
+            int so_gpio;
+            if (sscanf(dong_upper + 8, "%31[^;];%d", ten, &so_gpio) != 2) {
+                printf("Loi: cu phap CFG;PIN sai. Vi du: CFG;PIN;PUL_KEO_A;4\n");
+                return;
+            }
+            if (so_gpio < 0 || so_gpio > 39) {
+                printf("Loi: so GPIO phai trong khoang 0-39.\n");
+                return;
+            }
+            int *dich = NULL;
+            if      (strcmp(ten, "PUL_KEO_A") == 0)      dich = &g_cfg.pin_pul_keo_a;
+            else if (strcmp(ten, "DIR_KEO_A") == 0)      dich = &g_cfg.pin_dir_keo_a;
+            else if (strcmp(ten, "PUL_KEO_B") == 0)      dich = &g_cfg.pin_pul_keo_b;
+            else if (strcmp(ten, "DIR_KEO_B") == 0)      dich = &g_cfg.pin_dir_keo_b;
+            else if (strcmp(ten, "PUL_XOAY") == 0)       dich = &g_cfg.pin_pul_xoay;
+            else if (strcmp(ten, "DIR_XOAY") == 0)       dich = &g_cfg.pin_dir_xoay;
+            else if (strcmp(ten, "RELAY_PLASMA") == 0)   dich = &g_cfg.pin_relay_plasma;
+            else if (strcmp(ten, "PLC_IN_START") == 0)   dich = &g_cfg.pin_plc_in_start;
+            else if (strcmp(ten, "PLC_IN_STOP") == 0)    dich = &g_cfg.pin_plc_in_stop;
+            else if (strcmp(ten, "PLC_IN_EMG") == 0)     dich = &g_cfg.pin_plc_in_emg;
+            else if (strcmp(ten, "PLC_IN_LIMIT") == 0)   dich = &g_cfg.pin_plc_in_limit;
+            else if (strcmp(ten, "PLC_OUT_READY") == 0)  dich = &g_cfg.pin_plc_out_ready;
+            else if (strcmp(ten, "PLC_OUT_RUNNING") == 0) dich = &g_cfg.pin_plc_out_running;
+            else if (strcmp(ten, "PLC_OUT_DONE") == 0)   dich = &g_cfg.pin_plc_out_done;
+            else if (strcmp(ten, "PLC_OUT_FAULT") == 0)  dich = &g_cfg.pin_plc_out_fault;
+            if (!dich) {
+                printf("Loi: ten chan '%s' khong hop le.\n", ten);
+                return;
+            }
+            *dich = so_gpio;
+            printf("OK_CFG: da dat %s = GPIO%d (chi ap dung sau khi CFG;SAVE + CFG;REBOOT).\n",
+                   ten, so_gpio);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;CAL;MICROSTEP;", 19) == 0) {
+            double gia_tri = atof(dong_upper + 19);
+            if (gia_tri <= 0) { printf("Loi: gia tri microstep phai > 0.\n"); return; }
+            g_cfg.microstep_moi_vong = gia_tri;
+            printf("OK_CFG: microstep_moi_vong = %.2f (da ap dung ngay).\n", gia_tri);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;CAL;MMVONG;", 16) == 0) {
+            double gia_tri = atof(dong_upper + 16);
+            if (gia_tri <= 0) { printf("Loi: gia tri mm/vong phai > 0.\n"); return; }
+            g_cfg.mm_moi_vong_truc_x = gia_tri;
+            printf("OK_CFG: mm_moi_vong_truc_x = %.4f (da ap dung ngay).\n", gia_tri);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;DAO;", 8) == 0) {
+            char truc[16];
+            int gia_tri;
+            if (sscanf(dong_upper + 8, "%15[^;];%d", truc, &gia_tri) != 2) {
+                printf("Loi: cu phap CFG;DAO sai. Vi du: CFG;DAO;KEOA;1\n");
+                return;
+            }
+            bool *dich = NULL;
+            if      (strcmp(truc, "KEOA") == 0) dich = &g_cfg.dao_keo_a;
+            else if (strcmp(truc, "KEOB") == 0) dich = &g_cfg.dao_keo_b;
+            else if (strcmp(truc, "XOAY") == 0) dich = &g_cfg.dao_xoay;
+            if (!dich) {
+                printf("Loi: truc '%s' khong hop le (KEOA/KEOB/XOAY).\n", truc);
+                return;
+            }
+            *dich = (gia_tri != 0);
+            printf("OK_CFG: dao chieu %s = %d (da ap dung ngay).\n", truc, (int)*dich);
+            return;
+        }
+        printf("Loi: lenh CFG khong hop le: %s\n", dong);
+        return;
+    }
+
     // ----- Lenh dieu khien (khong o trong che do nap) -----
     if (strcmp(dong_upper, "PROG;BEGIN") == 0) {
         dang_nap_chuong_trinh = true;
@@ -911,7 +1191,7 @@ static void xu_ly_lenh_tu_pc(char *dong)
 
     if (strcmp(dong_upper, "STOP") == 0) {
         trang_thai_chay = YEU_CAU_DUNG_HAN;
-        gpio_set_level(RELAY_PLASMA, 0);  // AN TOAN: tat mo cat ngay lap tuc
+        gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat ngay lap tuc
         xQueueReset(hang_doi_lenh_dong_co);
         so_buoc_da_nap = 0;
         printf("STOPPED: da tat mo cat, dung han va xoa toan bo chuong trinh.\n");
@@ -979,6 +1259,16 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "Khoi dong dieu khien may cat ong - ESP32 devkit goc (G-code chuan qua USB COM)");
 
+    // ----- Nap cau hinh (chan GPIO, hieu chuan) tu flash (NVS), neu co -----
+    esp_err_t loi_nvs = nvs_flash_init();
+    if (loi_nvs == ESP_ERR_NVS_NO_FREE_PAGES || loi_nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        loi_nvs = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(loi_nvs);
+    cau_hinh_doc_tu_nvs();
+    cau_hinh_in_ra();
+
     cau_hinh_ngo_ra();
     cau_hinh_ngo_vao();
     cau_hinh_uart_pc();
@@ -988,7 +1278,7 @@ void app_main(void)
 
     hang_doi_lenh_dong_co = xQueueCreate(MAX_BUOC_CHUONG_TRINH, sizeof(lenh_dong_co_t));
 
-    gpio_set_level(PLC_OUT_READY, 1);
+    gpio_set_level(g_cfg.pin_plc_out_ready, 1);
 
     xTaskCreatePinnedToCore(task_dong_co, "task_dong_co", 4096, NULL, 10, NULL, 1);
     xTaskCreatePinnedToCore(task_an_toan, "task_an_toan", 2048, NULL, 15, NULL, 0);
