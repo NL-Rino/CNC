@@ -106,7 +106,37 @@ duoc chap nhan va bo qua (de tuong thich file xuat tu phan mem CAM).
 Neu dong co bi RU / MAT BUOC luc vao cat (thieu mo-men), bat lai tang toc bang
 o chon trong tab *Hieu chuan* cua phan mem cai dat (lenh `CFG;RAMP;CAT;1`).
 
-## 7. An toan
+## 7. Dung may - 3 muc do
+
+| Lenh | Cach dung | Chuong trinh |
+|---|---|---|
+| **EMG / LIMIT** (tu PLC) | Cat xung NGAY LAP TUC, khong giam toc | Dung han |
+| **STOP** (nut do / phim Esc) | Giam toc cuong buc ~150 xung roi dung | Xoa het |
+| **PAUSE** | Giam toc cuong buc roi DUNG NGAY TAI CHO giua doan | Giu lai |
+
+**PAUSE dung ngay tai cho, KHONG cho het buoc hien tai.** Phan doan con lai
+duoc tra vao dau hang doi, bam RESUME la chay tiep dung cho vua dung, khong
+mat xung nao. Khoang cach dung: 150 xung, o toc do cat khoang 0.5mm / 20-30ms.
+
+Muon dung gap hon hoac em hon thi sua `SO_BUOC_DUNG_GAP` trong `main/main.c`
+(nho cang de truot buoc, lon cang dung cham).
+
+> Sau PAUSE mo cat da tat. Khi RESUME nho BAT LAI mo cat neu dang cat do dang.
+
+## 8. Vi tri = dem xung nguyen
+
+Firmware dem so xung da xuat cho tung truc bang so **nguyen co dau**, khong
+cong don so thuc. Nho vay:
+
+- Vi tri khong bao gio bi troi do sai so lam tron, du chay hang nghin doan
+- Dung giua chung (PAUSE/STOP) van biet chinh xac dang o dau
+- Lenh `POS` in ca mm/do lan **so xung tho** de doi chieu khi nghi ngo truot buoc
+
+Phan mem van hanh tu hoi `POS` moi 2 giay khi may dang ranh, hien so xung ngay
+canh o vi tri. Neu so xung dung ma phoi lai lech thi la dong co dang TRUOT BUOC
+(thieu mo-men / dong dat qua thap), khong phai loi phan mem.
+
+## 9. An toan
 
 Firmware TU DONG tat relay mo cat plasma khi: gap STOP, PAUSE, M0/M1, M2/M30,
 hoac co tin hieu EMG/LIMIT tu PLC.
@@ -114,7 +144,7 @@ hoac co tin hieu EMG/LIMIT tu PLC.
 > Day chi la lop bao ve **muc phan mem**. KHONG thay the duoc relay an toan
 > phan cung cat nguon dong luc truc tiep tren duong EMG that.
 
-## 8. So do chan mac dinh (ESP32 devkit goc)
+## 10. So do chan mac dinh (ESP32 devkit goc)
 
 ```
 PUL_KEO_A = GPIO4    DIR_KEO_A = GPIO13
@@ -133,7 +163,7 @@ firmware** - cau hinh duoc luu trong NVS (flash noi bo), khong mat khi mat dien.
 Doi chan GPIO thi phai bam *Luu vao flash* roi *Khoi dong lai ESP32* moi co
 hieu luc; doi hieu chuan va dao chieu thi co hieu luc ngay.
 
-## 9. Gioi han hien tai
+## 11. Gioi han hien tai
 
 - Chuong trinh toi da **300 buoc** (`MAX_BUOC_CHUONG_TRINH` trong `main.c`).
   Phan mem van hanh se canh bao truoc neu file vuot qua gioi han nay

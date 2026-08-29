@@ -52,6 +52,19 @@
  * AN TOAN MO CAT PLASMA: relay mo cat duoc TU DONG TAT khi gap STOP, PAUSE,
  * M0/M1, M2/M30, hoac khi co tin hieu EMG/LIMIT tu PLC.
  *
+ * DUNG MAY - 3 muc do khac nhau:
+ *   EMG / LIMIT (tu PLC) : cat xung NGAY LAP TUC, khong giam toc (an toan tren het)
+ *   STOP (tu PC)         : giam toc cuong buc trong SO_BUOC_DUNG_GAP xung roi
+ *                          dung han va xoa chuong trinh
+ *   PAUSE (tu PC)        : giam toc cuong buc roi DUNG NGAY TAI CHO giua doan.
+ *                          Phan doan con lai duoc tra vao DAU hang doi, bam
+ *                          RESUME la chay tiep dung cho vua dung, khong mat xung
+ *
+ * VI TRI = DEM XUNG NGUYEN: firmware dem so xung da xuat cho tung truc bang so
+ * nguyen co dau (tong_xung_keo / tong_xung_xoay) chu KHONG cong don so thuc.
+ * Nho vay vi tri khong bao gio bi troi do sai so lam tron, va dung giua chung
+ * van biet chinh xac dang o dau. Lenh POS in ca mm/do lan so xung tho.
+ *
  * QUAN TRONG VE AN TOAN:
  *   Day la lop bao ve MUC PHAN MEM. KHONG thay the relay an toan phan cung
  *   cat nguon dong luc truc tiep tren duong EMG that.
@@ -147,6 +160,10 @@
 // BUOC. Giai phap: xuat xung cham o dau, tang dan len toc do dat (tang toc),
 // va cham dan truoc khi dung (giam toc) - dang hinh thang, giong CNC that.
 #define SO_BUOC_TANG_TOC      400    // so xung dung de tang/giam toc
+// So xung dung de GIAM TOC CUONG BUC khi bam PAUSE/STOP giua chung. Cang nho
+// thi dung cang gap nhung cang de truot buoc. 150 xung o toc do cat ~7.5kHz
+// tuong duong dung sau khoang 20-30 mili giay - coi nhu dung ngay lap tuc.
+#define SO_BUOC_DUNG_GAP      150
 #define HE_SO_CHAM_LUC_DAU    4      // luc bat dau chay cham gap N lan toc do dat
 
 static const char *TAG = "MAY_CAT_ONG";
@@ -320,7 +337,7 @@ static volatile bool co_dung_khan_cap = false;  // set boi ISR (PLC/EMG/LIMIT th
 // ----- Trang thai dieu khien chuong trinh tu PC -----
 typedef enum {
     CHAY_BINH_THUONG = 0,
-    YEU_CAU_TAM_DUNG = 1,   // PAUSE: chay het buoc hien tai roi dung, giu vi tri
+    YEU_CAU_TAM_DUNG = 1,   // PAUSE: giam toc va dung NGAY tai cho, giu vi tri
     DANG_TAM_DUNG    = 2,   // da dung, cho RESUME
     YEU_CAU_DUNG_HAN = 3,   // STOP: dung ngay + xoa het buoc con lai
 } trang_thai_chay_t;
@@ -370,10 +387,36 @@ typedef struct {
     loai_lenh_t loai;
 } lenh_dong_co_t;
 
-// Vi tri hien tai THUC TE, don vi do - firmware tu dem chinh xac,
-// cap nhat ngay ca khi buoc bi ngat giua chung boi STOP
-static double vi_tri_xoay_do = 0.0;
-static double vi_tri_keo_mm  = 0.0;
+// ================== VI TRI: DEM XUNG NGUYEN ==================
+// Vi tri KHONG con duoc cong don bang so thuc nua (cong don double qua hang
+// nghin doan se tich luy sai so lam tron). Thay vao do firmware dem SO XUNG
+// da xuat cho tung truc bang so NGUYEN CO DAU - day la "su that" duy nhat:
+//   - chinh xac tuyet doi, khong bao gio troi
+//   - dung ngay giua chung (PAUSE/STOP) van biet chinh xac dang o dau
+//   - doi lai ra mm / do bat ky luc nao bang he so hieu chuan hien hanh
+static volatile long tong_xung_keo = 0;   // xung truc X, duong = chieu +
+static volatile long tong_xung_xoay = 0;  // xung truc A, duong = chieu +
+
+static double doc_vi_tri_keo_mm(void)
+{
+    return ((double)tong_xung_keo / g_cfg.microstep_moi_vong) * g_cfg.mm_moi_vong_truc_x;
+}
+
+static double doc_vi_tri_xoay_do(void)
+{
+    return ((double)tong_xung_xoay / g_cfg.microstep_moi_vong) * 360.0;
+}
+
+// Doi tu mm / do sang so xung (dung khi ZERO va G92 dat lai toa do)
+static long doi_mm_sang_xung(double mm)
+{
+    return lround(mm / g_cfg.mm_moi_vong_truc_x * g_cfg.microstep_moi_vong);
+}
+
+static long doi_do_sang_xung(double do_goc)
+{
+    return lround(do_goc / 360.0 * g_cfg.microstep_moi_vong);
+}
 
 // ================== BO NHO CHUONG TRINH (nap theo lo) ==================
 static lenh_dong_co_t chuong_trinh[MAX_BUOC_CHUONG_TRINH];
@@ -466,7 +509,7 @@ static void task_dong_co(void *param)
         if (dang_chay_chuong_trinh && so_buoc_con_lai <= 0) {
             dang_chay_chuong_trinh = false;
             printf("XONG_CHUONG_TRINH: da chay het chuong trinh. Vi tri: X=%.2f A=%.2f\n",
-                   vi_tri_keo_mm, vi_tri_xoay_do);
+                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
         }
 
         if (xQueueReceive(hang_doi_lenh_dong_co, &lenh, portMAX_DELAY) != pdTRUE) {
@@ -504,9 +547,10 @@ static void task_dong_co(void *param)
 
         // ----- Dat lai toa do giua chuong trinh (G92) -----
         if (lenh.loai == LENH_DAT_GOC) {
-            if (lenh.dat_x) vi_tri_keo_mm = lenh.gia_tri_x;
-            if (lenh.dat_a) vi_tri_xoay_do = lenh.gia_tri_a;
-            printf("G92: da dat lai toa do. Vi tri: X=%.2f A=%.2f\n", vi_tri_keo_mm, vi_tri_xoay_do);
+            if (lenh.dat_x) tong_xung_keo = doi_mm_sang_xung(lenh.gia_tri_x);
+            if (lenh.dat_a) tong_xung_xoay = doi_do_sang_xung(lenh.gia_tri_a);
+            printf("G92: da dat lai toa do. Vi tri: X=%.2f A=%.2f\n",
+                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
             continue;
         }
 
@@ -515,7 +559,7 @@ static void task_dong_co(void *param)
             gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung cho
             trang_thai_chay = DANG_TAM_DUNG;
             printf("M0_PAUSED: da tat mo cat, tam dung theo lenh M0/M1 tai X=%.2f A=%.2f. "
-                   "Gui RESUME de chay tiep.\n", vi_tri_keo_mm, vi_tri_xoay_do);
+                   "Gui RESUME de chay tiep.\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
             while (trang_thai_chay == DANG_TAM_DUNG && !co_dung_khan_cap) {
                 vTaskDelay(pdMS_TO_TICKS(50));
             }
@@ -583,12 +627,30 @@ static void task_dong_co(void *param)
         uint32_t ramp_dau  = cho_tang_toc ? vung_ramp : 0;
         uint32_t ramp_cuoi = cho_giam_toc ? vung_ramp : 0;
 
+        // ----- DUNG GIUA CHUNG (PAUSE / STOP) -----
+        // PAUSE va STOP tu PC KHONG cho het buoc nua ma dung NGAY tai cho.
+        // Nhung khong cat xung dot ngot: giam toc cuong buc trong vong
+        // SO_BUOC_DUNG_GAP xung roi moi dung, neu khong dong co se truot va
+        // vi tri dem duoc se khac vi tri that.
+        // Rieng EMG/LIMIT tu PLC thi cat NGAY LAP TUC, khong giam toc.
+        bool dang_dung_gap = false;      // da nhan lenh dung, dang giam toc
+        uint32_t xung_dung_gap = 0;      // so xung da giam toc
+        bool bi_tam_dung_giua = false;   // dung do PAUSE -> con phan du de chay tiep
+
         for (uint32_t i = 0; i < troi; i++) {
-            // Chi STOP hoac EMG moi cat NGAY giua chung.
-            // PAUSE khong cat o day - buoc hien tai chay het roi moi dung.
-            if (co_dung_khan_cap || trang_thai_chay == YEU_CAU_DUNG_HAN) {
+            // EMG / LIMIT phan cung: cat NGAY, khong giam toc (an toan tren het)
+            if (co_dung_khan_cap) {
                 bi_dung_han = true;
                 break;
+            }
+            // PAUSE / STOP tu PC: bat dau giam toc cuong buc ngay tai cho
+            if (!dang_dung_gap && (trang_thai_chay == YEU_CAU_DUNG_HAN ||
+                                   trang_thai_chay == YEU_CAU_TAM_DUNG)) {
+                dang_dung_gap = true;
+                xung_dung_gap = 0;
+                bi_tam_dung_giua = (trang_thai_chay == YEU_CAU_TAM_DUNG);
+                // AN TOAN: tat mo cat ngay khi bat dau dung, khong doi giam toc xong
+                gpio_set_level(g_cfg.pin_relay_plasma, 0);
             }
 
             // --- Quyet dinh truc nao can xuat xung o vong lap nay ---
@@ -620,19 +682,31 @@ static void task_dong_co(void *param)
 
             esp_rom_delay_us(5);  // do rong xung HIGH
 
+            // DEM XUNG ngay khi vua xuat - day la nguon so lieu vi tri duy nhat
             if (xung_x) {
                 gpio_set_level(g_cfg.pin_pul_keo_a, 0);
                 gpio_set_level(g_cfg.pin_pul_keo_b, 0);
                 da_chay_x++;
+                tong_xung_keo += lenh.huong_x ? 1 : -1;
             }
             if (xung_a) {
                 gpio_set_level(g_cfg.pin_pul_xoay, 0);
                 da_chay_a++;
+                tong_xung_xoay += lenh.huong_a ? 1 : -1;
             }
 
             // ----- Tinh chu ky xung cho vong lap nay theo ramp hinh thang -----
             uint32_t chu_ky_hien_tai = chu_ky_dat;
-            if (ramp_dau > 0 && i < ramp_dau) {
+            if (dang_dung_gap) {
+                // GIAM TOC CUONG BUC de dung ngay tai cho: chu ky tang dan tu
+                // toc do dang chay len toc do cham nhat roi dung han
+                xung_dung_gap++;
+                if (xung_dung_gap >= SO_BUOC_DUNG_GAP) {
+                    break;   // da cham du, dung han tai day
+                }
+                chu_ky_hien_tai = chu_ky_dat +
+                    (uint32_t)(((uint64_t)(chu_ky_dau - chu_ky_dat) * xung_dung_gap) / SO_BUOC_DUNG_GAP);
+            } else if (ramp_dau > 0 && i < ramp_dau) {
                 // Giai doan TANG TOC: chu ky giam dan tu chu_ky_dau -> chu_ky_dat
                 uint32_t con_lai = ramp_dau - i;
                 chu_ky_hien_tai = chu_ky_dat +
@@ -648,11 +722,14 @@ static void task_dong_co(void *param)
             esp_rom_delay_us(nghi);
         }
 
-        // Con noi tiep sang doan cat ke tiep hay khong. Neu nguoi van hanh vua
-        // bam PAUSE thi PHAI coi nhu ket thuc chuoi de con dung lai duoc, khong
-        // duoc chay thang het ca duong cat roi moi dung.
-        bool ket_thuc_chuoi = !lenh.noi_lien_sau ||
-                              (trang_thai_chay == YEU_CAU_TAM_DUNG);
+        // Neu dung gap do STOP (khong phai PAUSE) thi coi nhu dung han
+        if (dang_dung_gap && !bi_tam_dung_giua) {
+            bi_dung_han = true;
+        }
+
+        // Con noi tiep sang doan cat ke tiep hay khong. Neu vua bam PAUSE thi
+        // phai coi nhu ket thuc chuoi de con dung lai duoc.
+        bool ket_thuc_chuoi = !lenh.noi_lien_sau || dang_dung_gap;
 
         // Trong chuoi cat lien tuc thi GIU nguyen RUNNING, khong ha xuong roi
         // keo len lien tuc o moi diem noi
@@ -660,19 +737,49 @@ static void task_dong_co(void *param)
             gpio_set_level(g_cfg.pin_plc_out_running, 0);
         }
 
-        // Cap nhat vi tri THUC TE theo dung so xung da xuat cho TUNG truc
-        // (chinh xac ngay ca khi bi cat giua chung boi STOP)
-        if (da_chay_x > 0) {
-            double mm_da_di = ((double)da_chay_x / g_cfg.microstep_moi_vong) * g_cfg.mm_moi_vong_truc_x;
-            vi_tri_keo_mm += lenh.huong_x ? mm_da_di : -mm_da_di;
-        }
-        if (da_chay_a > 0) {
-            double do_da_quay = ((double)da_chay_a / g_cfg.microstep_moi_vong) * 360.0;
-            vi_tri_xoay_do += lenh.huong_a ? do_da_quay : -do_da_quay;
-        }
+        // Vi tri KHONG can cong don o day nua - tong_xung_* da duoc cong ngay
+        // tai tung xung trong vong lap tren, nen luon dung ke ca khi dung giua chung
 
         if (bi_dung_han) {
-            printf("Da dung han (STOP). Vi tri: X=%.2f A=%.2f\n", vi_tri_keo_mm, vi_tri_xoay_do);
+            printf("Da dung han (STOP). Vi tri: X=%.2f A=%.2f (xung X=%ld A=%ld)\n",
+                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do(), tong_xung_keo, tong_xung_xoay);
+            continue;
+        }
+
+        // ----- PAUSE giua chung: cat doan lam doi, tra phan CON LAI vao dau
+        // hang doi de RESUME chay tiep dung cho vua dung -----
+        if (bi_tam_dung_giua) {
+            uint32_t con_x = (buoc_x > da_chay_x) ? (buoc_x - da_chay_x) : 0;
+            uint32_t con_a = (buoc_a > da_chay_a) ? (buoc_a - da_chay_a) : 0;
+
+            if (con_x > 0 || con_a > 0) {
+                // Phan con lai van la duong THANG tu cho dang dung toi diem cuoi
+                // cu, nen chi can giu nguyen huong va so xung con thieu
+                lenh_dong_co_t phan_du = lenh;
+                phan_du.so_buoc_x = con_x;
+                phan_du.so_buoc_a = con_a;
+                if (xQueueSendToFront(hang_doi_lenh_dong_co, &phan_du,
+                                      pdMS_TO_TICKS(100)) == pdTRUE) {
+                    so_buoc_con_lai++;   // buoc nay se duoc chay lai
+                } else {
+                    printf("Loi: khong tra duoc phan con lai vao hang doi, "
+                           "doan nay se bi thieu %lu xung X va %lu xung A.\n",
+                           (unsigned long)con_x, (unsigned long)con_a);
+                }
+            }
+
+            trang_thai_chay = DANG_TAM_DUNG;
+            printf("PAUSED: da tat mo cat, DUNG NGAY tai X=%.2f A=%.2f "
+                   "(xung X=%ld A=%ld, con %lu/%lu xung cua doan nay). "
+                   "Gui RESUME de chay tiep (nho bat lai mo cat neu can).\n",
+                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do(),
+                   tong_xung_keo, tong_xung_xoay,
+                   (unsigned long)(con_x > con_a ? con_x : con_a),
+                   (unsigned long)troi);
+
+            while (trang_thai_chay == DANG_TAM_DUNG && !co_dung_khan_cap) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
             continue;
         }
 
@@ -683,17 +790,18 @@ static void task_dong_co(void *param)
             continue;
         }
 
-        printf("Hoan thanh. Vi tri: X=%.2f A=%.2f\n", vi_tri_keo_mm, vi_tri_xoay_do);
+        printf("Hoan thanh. Vi tri: X=%.2f A=%.2f\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
         gpio_set_level(g_cfg.pin_plc_out_done, 1);
 
-        // Neu co yeu cau PAUSE: buoc nay da chay XONG HOAN TOAN, vi tri da
-        // cap nhat chinh xac -> gio moi chuyen sang tam dung
+        // Luoi an toan: PAUSE roi dung vao khe hep giua luc vong xuat xung vua
+        // ket thuc va luc kiem tra nay. Doan da chay xong het nen khong con phan
+        // du, chi can chuyen sang tam dung.
         if (trang_thai_chay == YEU_CAU_TAM_DUNG) {
             trang_thai_chay = DANG_TAM_DUNG;
             gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung
             printf("PAUSED: da tat mo cat, tam dung o vi tri X=%.2f A=%.2f. "
                    "Gui RESUME de chay tiep (nho bat lai mo cat neu can).\n",
-                   vi_tri_keo_mm, vi_tri_xoay_do);
+                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
         }
     }
 }
@@ -1237,8 +1345,8 @@ static void xu_ly_lenh_tu_pc(char *dong)
         plasma_mo_phong = false;             // dau chuong trinh coi nhu mo cat dang tat
         g_di_chuyen_modal = -1;              // chua co ma di chuyen nao truoc do
         he_so_don_vi = 1.0;                  // mac dinh mm (G21) cho toi khi gap G20
-        vi_tri_mo_phong_x = vi_tri_keo_mm;   // bat dau mo phong tu VI TRI THUC hien tai
-        vi_tri_mo_phong_y = vi_tri_xoay_do;
+        vi_tri_mo_phong_x = doc_vi_tri_keo_mm();   // mo phong tu VI TRI THUC hien tai
+        vi_tri_mo_phong_y = doc_vi_tri_xoay_do();
         printf("OK: san sang nhan G-code, gui PROG;END khi xong.\n");
         return;
     }
@@ -1316,11 +1424,20 @@ static void xu_ly_lenh_tu_pc(char *dong)
     // ----- ZERO: dat vi tri hien tai lam diem goc (0,0) -----
     // Dung sau khi da JOG mo cat toi dung vi tri bat dau cat mong muon
     if (strcmp(dong_upper, "ZERO") == 0) {
-        vi_tri_keo_mm = 0.0;
-        vi_tri_xoay_do = 0.0;
+        tong_xung_keo = 0;
+        tong_xung_xoay = 0;
         vi_tri_mo_phong_x = 0.0;
         vi_tri_mo_phong_y = 0.0;
-        printf("ZEROED: da dat vi tri hien tai lam diem goc. Vi tri: X=0.00 Y=0.00\n");
+        printf("ZEROED: da dat vi tri hien tai lam diem goc. Vi tri: X=0.00 A=0.00\n");
+        return;
+    }
+
+    // ----- POS: hoi vi tri hien tai, kem SO XUNG tho de kiem chung -----
+    if (strcmp(dong_upper, "POS") == 0) {
+        printf("Vi tri: X=%.2f A=%.2f\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
+        printf("XUNG: X=%ld A=%ld (moi vong %.0f xung, truc X %.4f mm/vong)\n",
+               tong_xung_keo, tong_xung_xoay,
+               g_cfg.microstep_moi_vong, g_cfg.mm_moi_vong_truc_x);
         return;
     }
 
@@ -1363,8 +1480,8 @@ static void xu_ly_lenh_tu_pc(char *dong)
         return;
     }
     // Dung bien mo phong = vi tri thuc de cac lenh don le cung tinh dung
-    vi_tri_mo_phong_x = vi_tri_keo_mm;
-    vi_tri_mo_phong_y = vi_tri_xoay_do;
+    vi_tri_mo_phong_x = doc_vi_tri_keo_mm();
+    vi_tri_mo_phong_y = doc_vi_tri_xoay_do();
     if (feed_dang_nap == 0) feed_dang_nap = -1; // dam bao co gia tri khoi tao lan dau
     xu_ly_1_dong_gcode(dong, false);
 }

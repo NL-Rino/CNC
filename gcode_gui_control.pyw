@@ -404,7 +404,12 @@ class GCodeApp:
 
         self.lbl_vitri = ttk.Label(khung_jog, text="X = 0.00 mm     A = 0.00 do",
                                    font=("Segoe UI", 12, "bold"))
-        self.lbl_vitri.grid(row=0, column=0, columnspan=5, padx=8, pady=(6, 2), sticky="w")
+        self.lbl_vitri.grid(row=0, column=0, columnspan=4, padx=8, pady=(6, 2), sticky="w")
+
+        # So xung tho do firmware dem - de doi chieu khi nghi ngo may bi truot buoc
+        self.lbl_xung = ttk.Label(khung_jog, text="xung: X=0  A=0",
+                                  font=("Consolas", 9), foreground="#666666")
+        self.lbl_xung.grid(row=0, column=4, padx=4, pady=(6, 2), sticky="w")
 
         # Nut DAT GOC de rieng o hang tren, khong chen chung hang voi cac nut jog
         # (neu de chung hang se bi bop lai con moi chu "GOC 0")
@@ -992,8 +997,21 @@ class GCodeApp:
 
             self.dang_doc = True
             threading.Thread(target=self._doc_serial_lien_tuc, daemon=True).start()
+            self.root.after(500, self._hoi_vi_tri_dinh_ky)
         except Exception as loi:
             messagebox.showerror("Loi ket noi", f"Khong the ket noi toi {cong}:\n{loi}")
+
+    def _hoi_vi_tri_dinh_ky(self):
+        """Hoi POS moi 2 giay khi may DANG RANH, de vi tri va so xung luon dung.
+
+        Khong hoi luc dang chay: moi lenh gui xuong deu lam ESP32 in ra UART,
+        ma printf o giua chuoi cat se chan vong xuat xung gay vet chay.
+        """
+        if not self.dang_ket_noi:
+            return
+        if self.trang_thai in ("SAN_SANG", "DA_DUNG", "TAM_DUNG"):
+            self._gui_qua_serial("POS", ghi_log=False)
+        self.root.after(2000, self._hoi_vi_tri_dinh_ky)
 
     def _ngat_ket_noi(self):
         self.dang_doc = False
@@ -1044,8 +1062,21 @@ class GCodeApp:
         ) else None)
         self._ghi_log(f"[ESP32] {dong}", the)
         self._thu_cap_nhat_vi_tri(dong)
+        self._thu_cap_nhat_so_xung(dong)
         self._thu_cap_nhat_trang_thai_tu_log(dong)
         self._thu_to_mau_dong_loi(dong)
+
+    def _thu_cap_nhat_so_xung(self, dong):
+        """Doc dong "XUNG: X=12345 A=678" do lenh POS tra ve."""
+        if not dong.startswith("XUNG: X="):
+            return
+        try:
+            phan = dong[len("XUNG: X="):]
+            x_str, con_lai = phan.split("A=", 1)
+            a_str = con_lai.split()[0]
+            self.lbl_xung.config(text=f"xung: X={int(x_str.strip())}  A={int(a_str)}")
+        except (IndexError, ValueError):
+            pass
 
     def _thu_cap_nhat_vi_tri(self, dong):
         if "Vi tri: X=" in dong and "A=" in dong:
