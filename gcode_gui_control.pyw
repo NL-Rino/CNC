@@ -19,9 +19,11 @@ from tkinter import ttk, messagebox, filedialog
 import serial
 import serial.tools.list_ports
 import threading
+import queue
 import time
 import os
 import re
+import math
 
 COM_PORT_MAC_DINH = "COM3"
 BAUD_RATE = 115200
@@ -60,6 +62,7 @@ CAC_DUOI_FILE_GCODE = [
 MAU_TRANG_THAI = {
     "CHUA_KETNOI": ("Chua ket noi", "#888888"),
     "SAN_SANG":    ("SAN SANG", "#28a745"),
+    "DANG_NAP":    ("DANG NAP CHUONG TRINH...", "#6f42c1"),
     "DANG_CHAY":   ("DANG CHAY...", "#007bff"),
     "TAM_DUNG":    ("TAM DUNG", "#f0ad4e"),
     "LOI":         ("LOI / DUNG KHAN CAP", "#d9534f"),
@@ -69,7 +72,7 @@ MAU_TRANG_THAI = {
 # Cac ma G firmware hieu (xem xu_ly_1_dong_gcode trong main.c)
 MA_G_FIRMWARE_HIEU = {0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 28, 30,
                       40, 41, 42, 43, 49, 54, 55, 56, 57, 58, 59,
-                      80, 90, 91, 92, 93, 94, 98, 99}
+                      61, 64, 80, 90, 91, 92, 93, 94, 98, 99}
 MA_M_FIRMWARE_HIEU = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 30}
 
 MA_G_DI_CHUYEN = {0, 1, 2, 3}
@@ -185,20 +188,15 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
                 kq.co_loi_nang = True
 
         if len(ma_g) + len(ma_m) > 1:
-            them_canh_bao(chi_so, "co nhieu ma G/M tren 1 dong - firmware chi chay ma DAU TIEN"
-                                  + (" (da tu tach thanh nhieu dong)" if chuan_hoa else ""))
+            them_canh_bao(chi_so, "co nhieu ma G/M tren 1 dong (firmware moi da chay duoc het)")
 
         # ----- Cap nhat trang thai modal -----
         for g in ma_g:
             if g == 20:
                 he_so_dai = 25.4
                 if not da_bao_inch:
-                    them_canh_bao(chi_so, "file dung don vi INCH (G20) nhung firmware BO QUA G20"
-                                          + (" - da tu doi toa do sang mm" if chuan_hoa
-                                             else " - toa do se sai 25.4 lan!"))
+                    them_canh_bao(chi_so, "file dung don vi INCH (G20) - toa do X duoc doi sang mm (x25.4)")
                     da_bao_inch = True
-                    if not chuan_hoa:
-                        kq.co_loi_nang = True
             elif g == 21:
                 he_so_dai = 1.0
             elif g == 90:
@@ -212,10 +210,7 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
         chi_co_f = (not ma_g and not ma_m and "F" in tu_khac
                     and "X" not in tu_khac and "A" not in tu_khac and "Y" not in tu_khac)
         if chi_co_f:
-            them_canh_bao(chi_so, "dong chi co F - firmware se bao loi"
-                                  + (" (da chuyen thanh toc do modal, bo dong nay)" if chuan_hoa else ""))
-            if not chuan_hoa:
-                kq.co_loi_nang = True
+            them_canh_bao(chi_so, "dong chi co F - dat toc do modal (firmware moi da chap nhan)")
             continue
 
         # ----- Xac dinh lenh di chuyen (co ke ca che do modal) -----
@@ -235,10 +230,7 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
                 kq.co_loi_nang = True
                 continue
             ma_dc = g_di_chuyen_modal
-            them_canh_bao(chi_so, f"dong chi co toa do (che do modal) - firmware se bao loi"
-                                  + (f" (da tu them lai G{ma_dc})" if chuan_hoa else ""))
-            if not chuan_hoa:
-                kq.co_loi_nang = True
+            them_canh_bao(chi_so, f"dong chi co toa do (che do modal) - dung lai G{ma_dc} cua dong truoc")
 
         # ----- Cac dong khong di chuyen: chi cap nhat trang thai -----
         for m in ma_m:
@@ -365,11 +357,17 @@ class GCodeApp:
         self.file_hien_tai = None
         self.da_thay_doi = False
         self.ket_qua_phan_tich = None
+        self.ket_qua_nap = None      # "OK" / "LOI" - dat khi ESP32 tra loi
+        # Cac luong nen (doc serial, nap chuong trinh) KHONG duoc dung cham vao
+        # giao dien Tkinter. Chung chi bo du lieu vao hang doi nay, con luong
+        # giao dien tu lay ra bang root.after - day la cach an toan duy nhat.
+        self.hang_doi_su_kien = queue.Queue()
 
         self._xay_dung_giao_dien()
         self._cap_nhat_tieu_de()
         self._cap_nhat_trang_thai("CHUA_KETNOI")
         self.root.after(200, self._ve_lai_xem_truoc)
+        self.root.after(50, self._lay_su_kien_tu_hang_doi)
 
     # ---------------------------------------------------------
     def _xay_dung_giao_dien(self):
@@ -447,6 +445,7 @@ class GCodeApp:
         self.notebook.pack(fill="both", expand=True, **pad)
         self._dung_tab_gcode()
         self._dung_tab_xem_truoc()
+        self._dung_tab_3d()
 
         # ----- Hang 4: toc do -----
         self._dung_khung_toc_do(pad)
@@ -563,6 +562,156 @@ class GCodeApp:
         self.text_canh_bao.pack(side="left", fill="both", expand=True, padx=(4, 0), pady=4)
         scroll_cb.pack(side="right", fill="y", padx=(0, 4), pady=4)
 
+    # ---------------------------------------------------------
+    # TAB MO PHONG 3D
+    # ---------------------------------------------------------
+    def _dung_tab_3d(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="  Mo phong 3D  ")
+
+        thanh = ttk.Frame(tab)
+        thanh.pack(fill="x", padx=5, pady=(5, 0))
+        ttk.Label(thanh, text="Duong kinh ong (mm):").pack(side="left")
+        self.entry_duong_kinh = ttk.Entry(thanh, width=7)
+        self.entry_duong_kinh.insert(0, "60")
+        self.entry_duong_kinh.pack(side="left", padx=(4, 10))
+        ttk.Button(thanh, text="Ve lai", command=self._ve_3d).pack(side="left")
+        ttk.Button(thanh, text="Goc nhin mac dinh",
+                   command=self._dat_lai_goc_nhin_3d).pack(side="left", padx=6)
+        ttk.Label(thanh, text="  Keo chuot trai de XOAY  |  lan chuot de PHONG TO",
+                  foreground="#555555").pack(side="left", padx=8)
+
+        self.canvas_3d = tk.Canvas(tab, bg="white", height=120, highlightthickness=1,
+                                   highlightbackground="#cccccc")
+        self.canvas_3d.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Goc nhin: xoay quanh truc doc (yaw) va truc ngang (pitch), theo radian
+        self.goc_yaw = math.radians(28)
+        self.goc_pitch = math.radians(20)
+        self.ty_le_3d = 1.0
+        self._chuot_truoc = None
+
+        self.canvas_3d.bind("<Configure>", lambda e: self._ve_3d())
+        self.canvas_3d.bind("<ButtonPress-1>", self._chuot_nhan_3d)
+        self.canvas_3d.bind("<B1-Motion>", self._chuot_keo_3d)
+        self.canvas_3d.bind("<ButtonRelease-1>", lambda e: setattr(self, "_chuot_truoc", None))
+        self.canvas_3d.bind("<MouseWheel>", self._lan_chuot_3d)          # Windows
+        self.canvas_3d.bind("<Button-4>", lambda e: self._phong_3d(1.1))  # Linux
+        self.canvas_3d.bind("<Button-5>", lambda e: self._phong_3d(1 / 1.1))
+
+    def _dat_lai_goc_nhin_3d(self):
+        self.goc_yaw = math.radians(28)
+        self.goc_pitch = math.radians(20)
+        self.ty_le_3d = 1.0
+        self._ve_3d()
+
+    def _chuot_nhan_3d(self, su_kien):
+        self._chuot_truoc = (su_kien.x, su_kien.y)
+
+    def _chuot_keo_3d(self, su_kien):
+        if self._chuot_truoc is None:
+            return
+        dx = su_kien.x - self._chuot_truoc[0]
+        dy = su_kien.y - self._chuot_truoc[1]
+        self._chuot_truoc = (su_kien.x, su_kien.y)
+        self.goc_yaw += dx * 0.01
+        self.goc_pitch = max(-1.4, min(1.4, self.goc_pitch + dy * 0.01))
+        self._ve_3d()
+
+    def _lan_chuot_3d(self, su_kien):
+        self._phong_3d(1.1 if su_kien.delta > 0 else 1 / 1.1)
+
+    def _phong_3d(self, he_so):
+        self.ty_le_3d = max(0.2, min(6.0, self.ty_le_3d * he_so))
+        self._ve_3d()
+
+    def _chieu_3d(self, x, y, z, tam_x, tam_y, ty_le, x_giua):
+        """Chieu diem 3D (x doc theo ong, y/z tren mat cat) xuong man hinh."""
+        cy, sy = math.cos(self.goc_yaw), math.sin(self.goc_yaw)
+        cp, sp = math.cos(self.goc_pitch), math.sin(self.goc_pitch)
+        xt = x - x_giua
+        # xoay quanh truc thang dung (yaw)
+        x1 = xt * cy - z * sy
+        z1 = xt * sy + z * cy
+        # xoay quanh truc ngang (pitch)
+        y2 = y * cp - z1 * sp
+        return tam_x + x1 * ty_le, tam_y - y2 * ty_le
+
+    def _ve_3d(self):
+        canvas = self.canvas_3d
+        canvas.delete("all")
+        kq = self.ket_qua_phan_tich
+        rong, cao = canvas.winfo_width(), canvas.winfo_height()
+        if rong < 60 or cao < 60:
+            return
+        if kq is None or not kq.doan:
+            canvas.create_text(rong // 2, cao // 2, text="Chua co duong cat de ve",
+                               fill="#999999")
+            return
+
+        try:
+            ban_kinh = float(self.entry_duong_kinh.get()) / 2.0
+            if ban_kinh <= 0:
+                raise ValueError
+        except ValueError:
+            canvas.create_text(rong // 2, cao // 2,
+                               text="Duong kinh ong phai la so > 0", fill="#d9534f")
+            return
+
+        cac_x = [d[0] for d in kq.doan] + [d[2] for d in kq.doan]
+        x_min, x_max = min(cac_x), max(cac_x)
+        # Ve du ong dai hon duong cat mot chut cho de nhin
+        dem = max((x_max - x_min) * 0.15, ban_kinh * 0.5)
+        ong_dau, ong_cuoi = x_min - dem, x_max + dem
+        x_giua = (ong_dau + ong_cuoi) / 2.0
+
+        # Tu chon ty le sao cho ca ong vua khung
+        do_lon = max(ong_cuoi - ong_dau, ban_kinh * 2) or 1.0
+        ty_le = (min(rong, cao * 1.8) * 0.42 / do_lon) * self.ty_le_3d
+        tam_x, tam_y = rong / 2, cao / 2
+
+        def diem(x, goc_do):
+            """(x mm doc ong, A do) -> toa do man hinh tren MAT NGOAI ong."""
+            g = math.radians(goc_do)
+            return self._chieu_3d(x, ban_kinh * math.cos(g), ban_kinh * math.sin(g),
+                                  tam_x, tam_y, ty_le, x_giua)
+
+        # ----- Khung day ong: cac duong tron quanh chu vi -----
+        so_vong = 9
+        for i in range(so_vong):
+            x = ong_dau + (ong_cuoi - ong_dau) * i / (so_vong - 1)
+            diem_vong = [diem(x, g) for g in range(0, 361, 12)]
+            mau = "#b8c4d0" if 0 < i < so_vong - 1 else "#8794a3"
+            canvas.create_line(diem_vong, fill=mau, width=1)
+
+        # ----- Cac duong sinh doc theo than ong -----
+        for goc in range(0, 360, 30):
+            canvas.create_line([diem(ong_dau, goc), diem(ong_cuoi, goc)],
+                               fill="#dde3e9", width=1)
+
+        # ----- Duong cat bam tren mat ong -----
+        for la_cat_can_ve in (False, True):
+            for x1, a1, x2, a2 in ((d[0], d[1], d[2], d[3]) for d in kq.doan
+                                   if d[4] == la_cat_can_ve):
+                # Chia nho doan de duong bam theo mat cong cua ong
+                buoc = max(2, int(abs(a2 - a1) / 6) + 1)
+                cac_diem = [diem(x1 + (x2 - x1) * t / buoc, a1 + (a2 - a1) * t / buoc)
+                            for t in range(buoc + 1)]
+                if la_cat_can_ve:
+                    canvas.create_line(cac_diem, fill="#d62828", width=2)
+                else:
+                    canvas.create_line(cac_diem, fill="#9aa0a6", width=1, dash=(4, 3))
+
+        # ----- Diem moi (M3) -----
+        for gx, ga in kq.diem_moi:
+            px, py = diem(gx, ga)
+            canvas.create_oval(px - 4, py - 4, px + 4, py + 4,
+                               fill="#f0ad4e", outline="#a06800")
+
+        canvas.create_text(8, 8, anchor="nw", fill="#555555", font=("Segoe UI", 8),
+                           text=f"Ong D{ban_kinh * 2:g}mm   |   duong cat dai theo X: "
+                                f"{x_min:.1f} -> {x_max:.1f} mm")
+
     def _dung_khung_toc_do(self, pad):
         khung = ttk.LabelFrame(self.root, text="Toc do (F - RPM dong co)")
         khung.pack(fill="x", **pad)
@@ -621,6 +770,7 @@ class GCodeApp:
             toc_do_nhanh=toc_do[1],
         )
         self._ve_hinh()
+        self._ve_3d()
         self._cap_nhat_thong_ke()
 
     def _cap_nhat_thong_ke(self):
@@ -855,15 +1005,37 @@ class GCodeApp:
         self._cap_nhat_trang_thai("CHUA_KETNOI")
 
     def _doc_serial_lien_tuc(self):
+        """Chay o LUONG NEN - chi duoc bo du lieu vao hang doi, khong dung giao dien."""
         while self.dang_doc and self.ser and self.ser.is_open:
             try:
                 if self.ser.in_waiting:
                     dong = self.ser.readline().decode(errors="ignore").strip()
                     if dong:
-                        self.root.after(0, self._xu_ly_dong_tu_esp32, dong)
+                        # Dat ket qua nap ngay tai day de luong nap thay duoc lien,
+                        # khong phai cho luong giao dien xu ly xong
+                        if dong.startswith("OK_NAP"):
+                            self.ket_qua_nap = "OK"
+                        elif dong.startswith("LOI_NAP"):
+                            self.ket_qua_nap = "LOI"
+                        self.hang_doi_su_kien.put(("esp32", dong))
             except Exception:
                 break
             time.sleep(0.02)
+
+    def _lay_su_kien_tu_hang_doi(self):
+        """Chay o LUONG GIAO DIEN - lay du lieu cac luong nen gui len va hien thi."""
+        try:
+            while True:
+                loai, noi_dung = self.hang_doi_su_kien.get_nowait()
+                if loai == "esp32":
+                    self._xu_ly_dong_tu_esp32(noi_dung)
+                elif loai == "log":
+                    self._ghi_log(noi_dung, "he_thong")
+                elif loai == "nap_that_bai":
+                    self._nap_that_bai(noi_dung)
+        except queue.Empty:
+            pass
+        self.root.after(50, self._lay_su_kien_tu_hang_doi)
 
     def _xu_ly_dong_tu_esp32(self, dong):
         the = "loi" if dong.startswith("Loi:") else ("ok" if any(
@@ -887,6 +1059,10 @@ class GCodeApp:
                 pass
 
     def _thu_cap_nhat_trang_thai_tu_log(self, dong):
+        # LUU Y: "Hoan thanh" la bao xong 1 BUOC, KHONG phai xong ca chuong trinh.
+        # Truoc day dong nay bi hieu nham la da chay xong -> chuyen ve SAN SANG ->
+        # nut PAUSE bi khoa ngay sau buoc dau tien, khong bam duoc luc dang chay.
+        # Firmware nay in "XONG_CHUONG_TRINH" khi that su het chuong trinh.
         if dong.startswith("Loi: DUNG KHAN CAP"):
             self._cap_nhat_trang_thai("LOI")
         elif dong.startswith("RUNNING"):
@@ -897,7 +1073,7 @@ class GCodeApp:
             self._cap_nhat_trang_thai("DANG_CHAY")
         elif dong.startswith("STOPPED") or dong.startswith("Da dung han"):
             self._cap_nhat_trang_thai("DA_DUNG")
-        elif dong.startswith("Hoan thanh"):
+        elif dong.startswith("XONG_CHUONG_TRINH"):
             self._cap_nhat_trang_thai("SAN_SANG")
         elif dong.startswith("He thong: da het dieu kien loi"):
             self._cap_nhat_trang_thai("SAN_SANG")
@@ -927,11 +1103,14 @@ class GCodeApp:
 
     def _cap_nhat_nut_theo_trang_thai(self):
         dang_chay = self.trang_thai == "DANG_CHAY"
+        dang_nap = self.trang_thai == "DANG_NAP"
         tam_dung = self.trang_thai == "TAM_DUNG"
         loi = self.trang_thai == "LOI"
-        san_sang_jog = self.dang_ket_noi and not dang_chay and not tam_dung and not loi
+        san_sang_jog = (self.dang_ket_noi and not dang_chay and not dang_nap
+                        and not tam_dung and not loi)
 
-        self.btn_run.config(state="normal" if (self.dang_ket_noi and not dang_chay and not loi) else "disabled")
+        self.btn_run.config(state="normal" if (self.dang_ket_noi and not dang_chay
+                                               and not dang_nap and not loi) else "disabled")
         self.btn_pause.config(state="normal" if dang_chay else "disabled")
         self.btn_resume.config(state="normal" if tam_dung else "disabled")
         self.btn_stop.config(state="normal" if self.dang_ket_noi else "disabled")
@@ -956,6 +1135,11 @@ class GCodeApp:
             return False
 
     def _nap_va_chay(self):
+        """NAP truoc, CHO ESP32 xac nhan OK_NAP, roi moi CHAY.
+
+        Chay trong luong nen de giao dien khong bi dong bang trong luc nap -
+        neu dong bang thi bam STOP cung khong an, rat nguy hiem khi may dang chay.
+        """
         if not self.dang_ket_noi:
             messagebox.showwarning("Chua ket noi", "Vui long ket noi Serial truoc.")
             return
@@ -980,20 +1164,48 @@ class GCodeApp:
                 return
 
         self.text_gcode.tag_remove("dong_loi", "1.0", "end")
-        self._ghi_log(f"[He thong] Dang nap {len(cac_dong)} dong G-code"
-                      f"{' (da chuan hoa)' if self.bien_chuan_hoa.get() else ''}...", "he_thong")
-        if not self._gui_qua_serial("PROG;BEGIN"):
-            return
-        time.sleep(0.05)
+        self.ket_qua_nap = None          # se duoc luong doc serial dat khi co tra loi
+        self._cap_nhat_trang_thai("DANG_NAP")
+        threading.Thread(target=self._nap_roi_chay_nen, args=(cac_dong,), daemon=True).start()
 
-        for dong in cac_dong:
-            self.ser.write((dong + "\n").encode())
-            time.sleep(0.005)  # nghi nho tranh tran buffer UART khi gui nhanh
+    def _nap_roi_chay_nen(self, cac_dong):
+        """Chay o LUONG NEN - chi ghi ra Serial va bo thong bao vao hang doi."""
+        bao = self.hang_doi_su_kien.put
+        try:
+            bao(("log", f"[He thong] Buoc 1/2: dang nap {len(cac_dong)} dong G-code..."))
+            self.ser.write(b"PROG;BEGIN\n")
+            time.sleep(0.05)
 
-        self._gui_qua_serial("PROG;END")
-        time.sleep(0.3)  # cho ESP32 xu ly va bao OK_NAP / LOI_NAP truoc khi RUN
+            for chi_so, dong in enumerate(cac_dong, 1):
+                self.ser.write((dong + "\n").encode())
+                time.sleep(0.004)  # nghi nho tranh tran buffer UART khi gui nhanh
+                if chi_so % 50 == 0:
+                    bao(("log", f"[He thong] ... da gui {chi_so}/{len(cac_dong)} dong"))
 
-        self._gui_qua_serial("RUN")
+            self.ser.write(b"PROG;END\n")
+
+            # ----- CHO ESP32 xac nhan nap xong (OK_NAP) truoc khi cho chay -----
+            han_cho = time.time() + 5.0
+            while time.time() < han_cho and self.ket_qua_nap is None:
+                time.sleep(0.03)
+
+            if self.ket_qua_nap is None:
+                bao(("nap_that_bai", "ESP32 khong tra loi sau 5 giay. Kiem tra lai ket noi."))
+                return
+            if self.ket_qua_nap == "LOI":
+                bao(("nap_that_bai",
+                     "ESP32 tu choi chuong trinh (LOI_NAP). Xem log de biet dong nao sai."))
+                return
+
+            bao(("log", "[He thong] Buoc 2/2: nap xong, bat dau CHAY."))
+            self.ser.write(b"RUN\n")
+        except Exception as loi:
+            bao(("nap_that_bai", f"Loi khi gui du lieu: {loi}"))
+
+    def _nap_that_bai(self, chu):
+        self._cap_nhat_trang_thai("SAN_SANG")
+        self._ghi_log(f"[He thong] NAP THAT BAI: {chu}", "loi")
+        messagebox.showerror("Nap that bai", chu + "\n\nMay CHUA chay.")
 
     def _jog(self, truc, dau):
         try:

@@ -25,6 +25,7 @@ from tkinter import ttk, messagebox
 import serial
 import serial.tools.list_ports
 import threading
+import queue
 import time
 
 COM_PORT_MAC_DINH = "COM3"
@@ -83,8 +84,12 @@ class SettingsApp:
         self.dang_doc = False
         self.entry_chan = {}
         self.bien_dao = {}
+        # Luong nen doc serial KHONG duoc dung cham vao giao dien Tkinter - no chi
+        # bo dong doc duoc vao hang doi nay, luong giao dien tu lay ra
+        self.hang_doi_su_kien = queue.Queue()
 
         self._xay_dung_giao_dien()
+        self.root.after(50, self._lay_su_kien_tu_hang_doi)
 
     # ---------------------------------------------------------
     # DUNG GIAO DIEN
@@ -317,10 +322,19 @@ class SettingsApp:
                 if self.ser.in_waiting:
                     dong = self.ser.readline().decode(errors="ignore").strip()
                     if dong:
-                        self.root.after(0, self._xu_ly_dong_tu_esp32, dong)
+                        self.hang_doi_su_kien.put(dong)
             except Exception:
                 break
             time.sleep(0.02)
+
+    def _lay_su_kien_tu_hang_doi(self):
+        """Chay o LUONG GIAO DIEN - lay cac dong luong nen doc duoc va hien thi."""
+        try:
+            while True:
+                self._xu_ly_dong_tu_esp32(self.hang_doi_su_kien.get_nowait())
+        except queue.Empty:
+            pass
+        self.root.after(50, self._lay_su_kien_tu_hang_doi)
 
     def _xu_ly_dong_tu_esp32(self, dong):
         self._ghi_log(f"[ESP32] {dong}")
