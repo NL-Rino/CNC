@@ -357,6 +357,7 @@ class GCodeApp:
         self.file_hien_tai = None
         self.da_thay_doi = False
         self.ket_qua_phan_tich = None
+        self.gcode_da_ve = None      # noi dung G-code cua lan ve hinh gan nhat
         self.ket_qua_nap = None      # "OK" / "LOI" - dat khi ESP32 tra loi
         # Cac luong nen (doc serial, nap chuong trinh) KHONG duoc dung cham vao
         # giao dien Tkinter. Chung chi bo du lieu vao hang doi nay, con luong
@@ -448,6 +449,9 @@ class GCodeApp:
         # ----- Hang 3: notebook G-code / xem truoc -----
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, **pad)
+        # Tu ve lai khi chuyen sang tab xem truoc / mo phong neu G-code da sua,
+        # de khong bao gio nhin phai hinh cu
+        self.notebook.bind("<<NotebookTabChanged>>", self._doi_tab)
         self._dung_tab_gcode()
         self._dung_tab_xem_truoc()
         self._dung_tab_3d()
@@ -522,6 +526,15 @@ class GCodeApp:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="  Chuong trinh G-code  ")
 
+        thanh = ttk.Frame(tab)
+        thanh.pack(fill="x", padx=5, pady=(5, 0))
+        tk.Button(thanh, text="🔄  CAP NHAT MO PHONG (F5)", font=("Segoe UI", 9, "bold"),
+                  bg="#0d6efd", fg="white", command=self._ve_lai_xem_truoc
+                  ).pack(side="left")
+        ttk.Label(thanh, text="   Sua G-code xong bam nut nay (hoac chuyen sang tab khac) "
+                              "de ve lai hinh va kiem tra lai",
+                  foreground="#555555").pack(side="left", padx=8)
+
         khung_text = ttk.Frame(tab)
         khung_text.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -542,7 +555,8 @@ class GCodeApp:
 
         thanh = ttk.Frame(tab)
         thanh.pack(fill="x", padx=5, pady=(5, 0))
-        ttk.Button(thanh, text="Ve lai (F5)", command=self._ve_lai_xem_truoc).pack(side="left")
+        tk.Button(thanh, text="🔄  CAP NHAT (F5)", font=("Segoe UI", 9, "bold"),
+                  bg="#0d6efd", fg="white", command=self._ve_lai_xem_truoc).pack(side="left")
         ttk.Label(thanh, text="   Do = duong CAT     Xam dut net = chay nhanh khong tai"
                               "     Cham vang = diem moi (M3)",
                   foreground="#555555").pack(side="left", padx=8)
@@ -581,6 +595,10 @@ class GCodeApp:
         self.entry_duong_kinh.insert(0, "60")
         self.entry_duong_kinh.pack(side="left", padx=(4, 8))
         self.entry_duong_kinh.bind("<Return>", lambda e: self._ve_3d())
+
+        tk.Button(thanh, text="🔄 Cap nhat", font=("Segoe UI", 9, "bold"),
+                  bg="#0d6efd", fg="white", command=self._ve_lai_xem_truoc
+                  ).pack(side="left", padx=(0, 6))
 
         self.btn_chay_mo_phong = ttk.Button(thanh, text="▶ Chay mo phong",
                                             command=self._bat_tat_mo_phong)
@@ -846,8 +864,21 @@ class GCodeApp:
             return None
         return cat, nhanh
 
+    def _doi_tab(self, su_kien=None):
+        """Chuyen sang tab xem truoc / mo phong 3D thi tu ve lai neu G-code da doi."""
+        try:
+            chi_so = self.notebook.index(self.notebook.select())
+        except tk.TclError:
+            return
+        if chi_so in (1, 2) and self._gcode_da_doi_tu_lan_ve():
+            self._ve_lai_xem_truoc()
+
+    def _gcode_da_doi_tu_lan_ve(self):
+        return self.text_gcode.get("1.0", "end") != self.gcode_da_ve
+
     def _ve_lai_xem_truoc(self):
         cac_dong = self.text_gcode.get("1.0", "end").splitlines()
+        self.gcode_da_ve = self.text_gcode.get("1.0", "end")
         toc_do = self._lay_toc_do()
         if toc_do is None:
             toc_do = (TOC_DO_CAT_MAC_DINH, TOC_DO_NHANH_MAC_DINH)
