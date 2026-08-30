@@ -69,6 +69,8 @@ GIAI_THICH_CHE_DO = {
        "tren mat ong). May tu doi ra do.",
 }
 
+TU_DONG_BAUD = "Tu dong (nhanh nhat)"
+
 DUOI_FILE = [("File G-code", "*.nc *.gcode *.tap *.txt"), ("Tat ca file", "*.*")]
 
 
@@ -147,6 +149,9 @@ class UngDung:
         self.toc_do_tay = tk.DoubleVar(value=30.0)
         self.buoc_nhich = tk.DoubleVar(value=1.0)
         self.thoi_gian_duc_lo = tk.DoubleVar(value=0.8)
+        cac_cong = kn.danh_sach_cong()
+        self.cong_com = tk.StringVar(value=cac_cong[0] if cac_cong else "COM3")
+        self.baud_chon = tk.StringVar(value=TU_DONG_BAUD)
         self.chay_thu = tk.BooleanVar(value=False)
 
         self.cac_phep_cat = []       # [{"ma":..., "gia_tri":{...}}]
@@ -160,6 +165,7 @@ class UngDung:
 
         self._xay_dung()
         self._chon_kieu(tv.THU_VIEN[0])
+        self._cap_nhat_nhan_cong()
         self._cap_nhat_nut()
         self.root.after(50, self._doc_hang_doi)
         self.root.after(2000, self._hoi_vi_tri_dinh_ky)
@@ -195,6 +201,8 @@ class UngDung:
         thanh.add_cascade(label="File", menu=m)
 
         m = tk.Menu(thanh, tearoff=0)
+        m.add_command(label="Cong COM va toc do truyen...", command=self._hop_cong_com)
+        m.add_separator()
         m.add_command(label="Toc do cat / khong tai / tay...", command=self._hop_toc_do)
         m.add_command(label="Thoi gian duc lo...", command=self._hop_duc_lo)
         thanh.add_cascade(label="Parameters", menu=m)
@@ -234,24 +242,16 @@ class UngDung:
                      highlightthickness=1)
         k.pack(fill="x", padx=6, pady=(6, 4))
 
-        tk.Label(k, text="COM:", bg=MAU["khung"]).pack(side="left", padx=(8, 2), pady=6)
-        self.o_com = ttk.Combobox(k, width=9, values=kn.danh_sach_cong())
-        cong = kn.danh_sach_cong()
-        self.o_com.set(cong[0] if cong else "COM3")
-        self.o_com.pack(side="left", padx=2)
-        ttk.Button(k, text="Lam moi", width=8,
-                   command=lambda: self.o_com.config(values=kn.danh_sach_cong())
-                   ).pack(side="left", padx=3)
+        # Cong COM va toc do truyen dat mot lan roi thoi -> nam trong menu
+        # Parameters, khong bay tren thanh cong cu. O day chi con NUT ket noi va
+        # mot dong cho biet dang noi vao dau.
+        self.nut_ket_noi = ttk.Button(k, text="Ket noi", width=11,
+                                      command=self._toggle_ket_noi)
+        self.nut_ket_noi.pack(side="left", padx=(8, 6), pady=6)
 
-        tk.Label(k, text="Toc do:", bg=MAU["khung"]).pack(side="left", padx=(10, 2))
-        self.o_baud = ttk.Combobox(k, width=15, state="readonly",
-                                   values=["Tu dong (nhanh nhat)"] +
-                                          [str(b) for b in kn.BAUD_THU_DAN])
-        self.o_baud.set("Tu dong (nhanh nhat)")
-        self.o_baud.pack(side="left", padx=2)
-
-        self.nut_ket_noi = ttk.Button(k, text="Ket noi", width=11, command=self._toggle_ket_noi)
-        self.nut_ket_noi.pack(side="left", padx=(6, 14))
+        self.nhan_cong = tk.Label(k, text="", bg=MAU["khung"], fg=MAU["chu_mo"],
+                                  font=("Segoe UI", 8), width=30, anchor="w")
+        self.nhan_cong.pack(side="left", padx=(0, 10))
 
         ttk.Separator(k, orient="vertical").pack(side="left", fill="y", pady=4)
 
@@ -769,6 +769,66 @@ class UngDung:
             ("Toc do DI CHUYEN TAY", self.toc_do_tay, "RPM dong co"),
         ], sau=self._sinh_lai_neu_co_bai)
 
+    def _hop_cong_com(self):
+        """Chon cong COM va toc do truyen. Dat mot lan roi thoi nen de trong menu."""
+        hop = tk.Toplevel(self.root)
+        hop.title("Cong COM va toc do truyen")
+        hop.transient(self.root)
+        hop.resizable(False, False)
+        hop.configure(bg=MAU["khung"])
+
+        tk.Label(hop, text="Cong COM:", bg=MAU["khung"], anchor="w").grid(
+            row=0, column=0, sticky="w", padx=12, pady=(12, 4))
+        o_cong = ttk.Combobox(hop, width=14, textvariable=self.cong_com,
+                              values=kn.danh_sach_cong())
+        o_cong.grid(row=0, column=1, padx=4, pady=(12, 4))
+
+        def lam_moi():
+            cac = kn.danh_sach_cong()
+            o_cong.config(values=cac)
+            if cac and self.cong_com.get() not in cac:
+                self.cong_com.set(cac[0])
+
+        ttk.Button(hop, text="Lam moi", width=9, command=lam_moi).grid(
+            row=0, column=2, padx=(4, 12), pady=(12, 4))
+
+        tk.Label(hop, text="Toc do truyen:", bg=MAU["khung"], anchor="w").grid(
+            row=1, column=0, sticky="w", padx=12, pady=4)
+        ttk.Combobox(hop, width=14, state="readonly", textvariable=self.baud_chon,
+                     values=[TU_DONG_BAUD] + [str(b) for b in kn.BAUD_THU_DAN]
+                     ).grid(row=1, column=1, columnspan=2, sticky="w", padx=4, pady=4)
+
+        tk.Label(hop, bg=MAU["khung"], fg=MAU["chu_mo"], justify="left", anchor="w",
+                 wraplength=380, font=("Segoe UI", 8),
+                 text="De \"Tu dong\" thi phan mem thu nang toc do tu 2000000 xuong, "
+                      "cai nao may chay on dinh thi dung - bai dai nap nhanh hon nhieu "
+                      "lan. ESP32 luon khoi dong o 115200 va tu quay ve muc do sau 4 "
+                      "giay neu doi khong thanh, nen khong bao gio mat lien lac.\n\n"
+                      "Doi cong hay toc do chi co hieu luc o LAN KET NOI SAU."
+                 ).grid(row=2, column=0, columnspan=3, sticky="w", padx=12, pady=(6, 4))
+
+        def dong():
+            hop.destroy()
+            self._cap_nhat_nhan_cong()
+
+        h = tk.Frame(hop, bg=MAU["khung"])
+        h.grid(row=3, column=0, columnspan=3, pady=(4, 12))
+        ttk.Button(h, text="Xong", width=10, command=dong).pack(side="left", padx=4)
+        hop.bind("<Return>", lambda e: dong())
+        hop.grab_set()
+
+    def _cap_nhat_nhan_cong(self):
+        """Dong chu canh nut Ket noi: dang noi vao dau, hoac se noi vao dau."""
+        if self._dang_ket_noi():
+            self.nhan_cong.config(
+                text=f"{self.cong_com.get()} - {self.may.baud_dang_dung} baud",
+                fg=MAU["chay"])
+        else:
+            toc_do = self.baud_chon.get()
+            toc_do = "tu do toc do" if toc_do == TU_DONG_BAUD else f"{toc_do} baud"
+            self.nhan_cong.config(text=f"{self.cong_com.get()} - {toc_do}",
+                                  fg=MAU["chu_mo"])
+
     def _hop_duc_lo(self):
         self._hop_nhap("Duc lo", [
             ("Thoi gian duc lo truoc khi cat", self.thoi_gian_duc_lo, "giay"),
@@ -962,23 +1022,31 @@ class UngDung:
             self._ket_noi()
 
     def _ket_noi(self):
-        chon = self.o_baud.get()
-        baud = None if chon.startswith("Tu dong") else int(chon)
+        chon = self.baud_chon.get()
+        baud = None if chon == TU_DONG_BAUD else int(chon)
+        cong = self.cong_com.get().strip()
+        if not cong:
+            messagebox.showwarning("Chua chon cong",
+                                   "Chua chon cong COM.\n\n"
+                                   "Vao menu Parameters > Cong COM va toc do truyen.")
+            return
         try:
-            self.may.mo(self.o_com.get().strip(), baud)
+            self.may.mo(cong, baud)
         except Exception as loi:
             messagebox.showerror("Loi ket noi", str(loi))
             self._them_loi(f"Khong ket noi duoc: {loi}", nang=True)
             return
         self.nut_ket_noi.config(text="Ngat ket noi")
-        self.nhan_ket_noi.config(text=f"{self.o_com.get()} - dang do toc do...")
+        self.nhan_ket_noi.config(text=f"{cong} - dang do toc do...")
+        self.nhan_cong.config(text=f"{cong} - dang do toc do...")
         self._dat_trang_thai("SAN_SANG")
-        self._ghi(f"Da ket noi {self.o_com.get()}", "he_thong")
+        self._ghi(f"Da ket noi {cong}", "he_thong")
 
     def _ngat_ket_noi(self):
         self.may.dong()
         self.nut_ket_noi.config(text="Ket noi")
         self.nhan_ket_noi.config(text="Chua ket noi")
+        self._cap_nhat_nhan_cong()
         self._dat_trang_thai("CHUA_KETNOI")
         self._ghi("Da ngat ket noi", "he_thong")
 
@@ -1170,7 +1238,9 @@ class UngDung:
                     self.nhan_x.config(text=f"{nd[0]:.2f}")
                     self.nhan_a.config(text=f"{nd[1]:.2f}")
                 elif loai == "baud":
-                    self.nhan_ket_noi.config(text=f"{self.o_com.get()} - {nd} baud")
+                    chu = f"{self.cong_com.get()} - {nd} baud"
+                    self.nhan_ket_noi.config(text=chu)
+                    self.nhan_cong.config(text=chu)
         except queue.Empty:
             pass
         self._cap_nhat_dong_ho()
