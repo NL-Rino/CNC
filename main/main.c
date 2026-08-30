@@ -63,7 +63,8 @@
  * VI TRI = DEM XUNG NGUYEN: firmware dem so xung da xuat cho tung truc bang so
  * nguyen co dau (tong_xung_keo / tong_xung_xoay) chu KHONG cong don so thuc.
  * Nho vay vi tri khong bao gio bi troi do sai so lam tron, va dung giua chung
- * van biet chinh xac dang o dau. Lenh POS in ca mm/do lan so xung tho.
+ * van biet chinh xac dang o dau. Day la chuyen NOI BO cua ESP32 - may
+ * tinh chi nhan lai VI TRI (mm / do), khong dem xung lai lam gi.
  *
  * QUAN TRONG VE AN TOAN:
  *   Day la lop bao ve MUC PHAN MEM. KHONG thay the relay an toan phan cung
@@ -580,6 +581,13 @@ static volatile bool dang_chay_chuong_trinh = false;
 // Trang thai THAT cua relay mo cat. Can biet chinh xac de xu ly "can bo dem":
 // neu mo dang bat ma may dung yen thi phoi bi thung ngay -> phai tat tuc thi.
 static volatile bool plasma_dang_bat = false;
+
+// Khi bam CHAY TIEP sau luc tam dung giua duong cat: mo cat da bi tat de khong
+// thung phoi, nen truoc khi chay tiep phai BAT lai va cho duc xuyen qua thanh
+// ong. May tinh gui kem thoi gian cho o day; task dong co thuc hien truoc khi
+// lay buoc ke tiep. De o task dong co chu khong o task giao tiep de trong luc
+// cho van bam STOP / EMG duoc.
+static volatile uint32_t duc_lo_truoc_khi_chay_ms = 0;
 
 static inline void dat_plasma(int muc)
 {
@@ -1115,6 +1123,23 @@ static void task_dong_co(void *param)
             continue;
         }
         cho_nap_ms = 0;
+
+        // ----- Duc lo lai truoc khi chay tiep (theo yeu cau cua may tinh) -----
+        if (duc_lo_truoc_khi_chay_ms > 0) {
+            uint32_t con_lai = duc_lo_truoc_khi_chay_ms;
+            duc_lo_truoc_khi_chay_ms = 0;
+            if (!co_dung_khan_cap && trang_thai_chay == CHAY_BINH_THUONG) {
+                dat_plasma(1);
+                printf("DUC_LO: da bat mo cat, cho %lu ms roi cat tiep.\n",
+                       (unsigned long)con_lai);
+                while (con_lai > 0 && !co_dung_khan_cap &&
+                       trang_thai_chay == CHAY_BINH_THUONG) {
+                    uint32_t buoc_ms = con_lai > 50 ? 50 : con_lai;
+                    vTaskDelay(pdMS_TO_TICKS(buoc_ms));
+                    con_lai -= buoc_ms;
+                }
+            }
+        }
 
         if (co_dung_khan_cap) {
             printf("Loi: dang o trang thai dung khan cap, bo qua buoc.\n");
@@ -2022,7 +2047,7 @@ static void xu_ly_lenh_tu_pc(char *dong)
             return;
         }
         if (strcmp(dong_upper, "PAUSE") == 0 || strcmp(dong_upper, "STOP") == 0 ||
-            strcmp(dong_upper, "RESUME") == 0 || strcmp(dong_upper, "POS") == 0 ||
+            strncmp(dong_upper, "RESUME", 6) == 0 || strcmp(dong_upper, "POS") == 0 ||
             strcmp(dong_upper, "BUF") == 0) {
             // roi xuong duoi xu ly nhu lenh dieu khien binh thuong
         } else {
@@ -2375,12 +2400,11 @@ static void xu_ly_lenh_tu_pc(char *dong)
         return;
     }
 
-    // ----- POS: hoi vi tri hien tai, kem SO XUNG tho de kiem chung -----
+    // ----- POS: hoi vi tri hien tai -----
     if (strcmp(dong_upper, "POS") == 0) {
+        // Chi bao VI TRI. So xung la chuyen noi bo cua ESP32 - no dem xung de
+        // biet vi tri, con may tinh khong can biet va cung khong dem lai.
         printf("Vi tri: X=%.2f A=%.2f\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
-        printf("XUNG: X=%ld A=%ld (moi vong %.0f xung, truc X %.4f mm/vong)\n",
-               tong_xung_keo, tong_xung_xoay,
-               g_cfg.microstep_moi_vong, g_cfg.mm_moi_vong_truc_x);
         return;
     }
 
@@ -2391,17 +2415,37 @@ static void xu_ly_lenh_tu_pc(char *dong)
             printf("Loi: chuong trinh da bi STOP, khong the PAUSE.\n");
         } else {
             trang_thai_chay = YEU_CAU_TAM_DUNG;
-            printf("He thong: da nhan PAUSE - se chay het buoc hien tai roi moi dung.\n");
+            printf("He thong: da nhan PAUSE - giam toc va dung NGAY tai cho, tat mo cat.\n");
         }
         return;
     }
 
-    if (strcmp(dong_upper, "RESUME") == 0) {
-        if (trang_thai_chay == DANG_TAM_DUNG || trang_thai_chay == YEU_CAU_TAM_DUNG) {
-            trang_thai_chay = CHAY_BINH_THUONG;
-            printf("RESUMED: chay tiep chuong trinh.\n");
-        } else {
+    // RESUME           - chay tiep ngay
+    // RESUME;<mili giay> - bat mo cat, cho duc xuyen thanh ong, roi chay tiep
+    if (strncmp(dong_upper, "RESUME", 6) == 0 &&
+        (dong_upper[6] == '\0' || dong_upper[6] == ';')) {
+        if (trang_thai_chay != DANG_TAM_DUNG && trang_thai_chay != YEU_CAU_TAM_DUNG) {
             printf("Loi: khong o trang thai tam dung, khong can RESUME.\n");
+            return;
+        }
+        uint32_t duc_ms = 0;
+        if (dong_upper[6] == ';') {
+            unsigned long so = strtoul(dong + 7, NULL, 10);
+            if (so > 30000) {
+                printf("Loi: thoi gian duc lo toi da 30000 ms.\n");
+                return;
+            }
+            duc_ms = (uint32_t)so;
+        }
+        // Dat TRUOC khi doi trang thai: task dong co doc duc_lo... ngay sau khi
+        // thay CHAY_BINH_THUONG, dat sau thi no da lay mat buoc ke tiep roi
+        duc_lo_truoc_khi_chay_ms = duc_ms;
+        trang_thai_chay = CHAY_BINH_THUONG;
+        if (duc_ms > 0) {
+            printf("RESUMED: se bat mo cat va duc lo %lu ms roi chay tiep.\n",
+                   (unsigned long)duc_ms);
+        } else {
+            printf("RESUMED: chay tiep chuong trinh.\n");
         }
         return;
     }
@@ -2410,6 +2454,7 @@ static void xu_ly_lenh_tu_pc(char *dong)
         trang_thai_chay = YEU_CAU_DUNG_HAN;
         dat_plasma(0);  // AN TOAN: tat mo cat ngay lap tuc
         vong_dem_xoa_sach();
+        duc_lo_truoc_khi_chay_ms = 0;    // huy yeu cau duc lo con treo
         dang_nap_chuong_trinh = false;   // huy luon phien nap dan neu dang nap
         co_loi_khi_nap = false;
         dang_chay_chuong_trinh = false;  // STOP da bao roi, khong bao XONG nua

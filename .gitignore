@@ -1,6 +1,7 @@
-build/
-sdkconfig.old
-*.pyc
 __pycache__/
+*.pyc
+build/
 dist/
 *.spec
+sdkconfig
+sdkconfig.old

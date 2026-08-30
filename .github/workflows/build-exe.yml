@@ -10,6 +10,8 @@ on:
       - claude/plasma-cnc-firmware-5obgaw
     paths:
       - "**.pyw"
+      - "loi/**.py"
+      - "kiem_tra/**.py"
       - ".github/workflows/build-exe.yml"
 
 permissions:
@@ -33,17 +35,22 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install pyserial pyinstaller
 
-      - name: Kiem tra cu phap 2 file phan mem
+      - name: Kiem tra cu phap phan mem
         run: |
-          python -m py_compile gcode_gui_control.pyw
+          python -m py_compile may_cat_ong.pyw
           python -m py_compile cnc_settings.pyw
+          python -m compileall -q loi
+
+      - name: Kiem tra toan hoc cua thu vien moi noi
+        run: python kiem_tra/test_thu_vien.py
 
       - name: Dong goi phan mem VAN HANH
         run: >
           python -m PyInstaller --onefile --windowed --noconfirm
           --name MayCatOng
           --hidden-import serial.tools.list_ports
-          gcode_gui_control.pyw
+          --collect-submodules loi
+          may_cat_ong.pyw
 
       - name: Dong goi phan mem CAI DAT
         run: >

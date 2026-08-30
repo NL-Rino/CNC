@@ -8,9 +8,14 @@ xoay ong), dieu khien bang G-CODE CHUAN qua cong USB COM.
 | File | Cong dung |
 |---|---|
 | `main/main.c` | Firmware ESP-IDF cho ESP32 (bo dieu khien) |
-| `gcode_gui_control.pyw` | Phan mem VAN HANH hang ngay tren may tinh |
+| `may_cat_ong.pyw` | **Phan mem chinh** - thu vien moi noi, mo phong 3D, chay may |
+| `loi/thu_vien_moi_noi.py` | Toan hinh hoc sinh duong cat cho tung kieu ghep ong |
+| `loi/phan_tich_gcode.py` | Doc / kiem tra / chuan hoa / nen G-code |
+| `loi/ve_3d.py` | Ve ong trong mam kep va duong cat |
+| `loi/ket_noi.py` | Duong day toi ESP32: thuong luong baud, nap dan |
 | `cnc_settings.pyw` | Phan mem CAI DAT nang cao (chan GPIO, hieu chuan) |
-| `build_exe.bat` | Dong goi 2 phan mem tren thanh file `.exe` chay doc lap |
+| `kiem_tra/test_thu_vien.py` | Kiem chung toan hoc cua thu vien moi noi |
+| `build_exe.bat` | Dong goi phan mem thanh file `.exe` chay doc lap |
 
 ## 1. Nap firmware cho ESP32
 
@@ -35,8 +40,8 @@ dang cat, va Task Watchdog se bao loi neu van bat.
 Cach 1 - chay truc tiep bang Python (can cai Python + `pip install pyserial`):
 
 ```
-python gcode_gui_control.pyw     (van hanh)
-python cnc_settings.pyw          (cai dat)
+python may_cat_ong.pyw           (phan mem chinh)
+python cnc_settings.pyw          (cai dat phan cung)
 ```
 
 Cach 2 - dong goi thanh `.exe` chay doc lap (may khac khong can cai Python):
@@ -50,6 +55,66 @@ Copy 2 file nay di dau cung chay duoc.
 
 > Windows Defender co the canh bao file `.exe` moi tao. Day la canh bao chung
 > cho moi file dong goi bang PyInstaller, chon "More info" -> "Run anyway".
+
+## 2b. Phan mem chinh - mot cua so lo het
+
+```
++----------------------------------------------------------------------+
+| File | Parameters | Nesting | Diagnostics | Settings | Alarm          |
++----------------------------------------------------------------------+
+| COM + toc do | CHE DO 1/2/3 | DUONG KINH ONG                          |
++---------------+------------------------------------+-----------------+
+| Thu vien      |                                    | Vi tri may X/A  |
+| moi noi       |        Mo phong 3D                 +-----------------+
+| (8 kieu)      |     ong trong mam kep              | Tien do %       |
++---------------+                                    +-----------------+
+| Dieu khien tay|                                    | Kich thuoc bai  |
++---------------+------------------------------------+-----------------+
+| Mo .NC | Ve goc | Chay thu | Bat mo | CHAY | TAM DUNG | TIEP | DUNG   |
++----------------------------------------------------------------------+
+| Edit (ve bai)  |  System (terminal)  |  Alarm (loi)                   |
++----------------------------------------------------------------------+
+```
+
+**Che do va duong kinh ong nam ngay tren man hinh chinh** - doi ong la viec lam
+hang ngay, khong phai vao muc cai dat.
+
+### Thu vien moi noi
+
+Chon kieu, nhap so do, bam *Them vao bai*. Lam bao nhieu mieng tren mot cay ong
+cung duoc; thu tu sap xep lai duoc bang nut Len / Xuong.
+
+| Kieu | Dung de |
+|---|---|
+| Yen ngua chu T | Dau ong om vao than ong chinh, vuong goc |
+| Yen ngua goc nghieng | Nhu tren nhung o goc bat ky, co ca do lech tam |
+| Cat vat | Ghep co: hai ong cung vat nua goc co roi up vao nhau |
+| Cat thang | Cat dut ong thanh doan |
+| Lo tron | Khoan lo xuyen tam qua thanh ong |
+| Ranh dai doc truc / theo chieu vong | Ranh bo tron hai dau |
+| Khia chu V | Khia roi bop lai de uon ong mot goc dinh truoc |
+
+Toan bo cong thuc deu la **hinh hoc chinh xac**, khong xap xi. Vi du lo tron:
+duong cat tren mat ong la giao tuyen cua hai hinh tru, khong phai duong tron
+phang - dung cong thuc xap xi thi lo D40 tren ong D60 bi **hep di 3,6 do**.
+Chay `python kiem_tra/test_thu_vien.py` de xem toan bo phan kiem chung.
+
+### Ba the o duoi
+
+- **Edit** - danh sach cac mieng trong bai, va o G-code (sua tay duoc)
+- **System** - terminal: xem va go thang lenh xuong ESP32
+- **Alarm** - chi ghi LOI THAT SU; ghi chu thuong chay xuong terminal
+
+### Tam dung va chay tiep
+
+Bam *TAM DUNG* thi ESP32 **giam toc va dung ngay tai cho**, dong thoi **tat mo
+cat** de khong thung phoi, roi nho dung phan con lai cua doan dang cat.
+
+Bam *CHAY TIEP* thi phan mem hoi truoc: **co can duc lo lai khong, va bao lau**.
+Dung giua duong cat ma chay tiep luon thi mo cat chua xuyen qua thanh ong da
+phai di chuyen, mach cat se bi dut doan. Chon "co" thi may gui `RESUME;<ms>`:
+ESP32 bat mo, cho dung tung ay mili giay, roi moi cat tiep.
+
 
 ## 3. Quy trinh van hanh
 
@@ -164,11 +229,11 @@ cong don so thuc. Nho vay:
 
 - Vi tri khong bao gio bi troi do sai so lam tron, du chay hang nghin doan
 - Dung giua chung (PAUSE/STOP) van biet chinh xac dang o dau
-- Lenh `POS` in ca mm/do lan **so xung tho** de doi chieu khi nghi ngo truot buoc
 
-Phan mem van hanh tu hoi `POS` moi 2 giay khi may dang ranh, hien so xung ngay
-canh o vi tri. Neu so xung dung ma phoi lai lech thi la dong co dang TRUOT BUOC
-(thieu mo-men / dong dat qua thap), khong phai loi phan mem.
+Day la chuyen **noi bo cua ESP32**. May tinh khong dem xung va cung khong hoi:
+no chi nhan lai VI TRI (mm / do) qua lenh `POS`, tu hoi moi 2 giay khi may dang
+ranh. Khong hoi luc dang chay - moi lenh gui xuong deu lam ESP32 in ra UART, ma
+in giua chuoi cat se chan vong xuat xung va tao vet dung tren duong cat.
 
 ## 9. An toan
 
@@ -400,3 +465,5 @@ len la du du.
   chay duoc
 - `G2/G3` chua noi suy cung tron that su, dang duoc xap xi thanh duong thang
   toi diem cuoi (phan mem se in canh bao khi gap)
+- Muc *Nesting* moi chi sap xep cac mieng noi tiep nhau tren mot cay ong theo
+  chieu dai, chua toi uu xoay quanh truc de tiet kiem vat lieu
