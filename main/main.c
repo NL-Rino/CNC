@@ -191,6 +191,20 @@
 // cat thi cho toi da ngan nay roi moi tam dung, phong khi duong truyen tre nhip.
 #define THOI_GIAN_CHO_NAP_MS  1000
 
+// ================== TOC DO COM (BAUD) ==================
+// LUON khoi dong o 115200 - toc do nao cung mo duoc, khong bao gio "chet cong".
+// May tinh muon nhanh hon thi gui BAUD;<so>, ESP32 tra loi roi moi doi.
+// LUOI AN TOAN: sau khi doi, neu trong THOI_GIAN_GIU_BAUD_MS khong nhan duoc
+// lenh hop le nao (may tinh doi that bai, day nhieu, chip USB khong chiu noi)
+// thi TU DONG quay ve 115200. Nho vay khong bao gio mat lien lac vinh vien.
+#define BAUD_MAC_DINH         115200
+#define THOI_GIAN_GIU_BAUD_MS 4000
+
+static unsigned baud_hien_tai = BAUD_MAC_DINH;
+static unsigned han_xac_nhan_baud = 0;   // 0 = khong cho xac nhan gi
+
+static void doi_baud(unsigned baud);
+
 // ----- NHIP BAO NHAN khi nap dan -----
 // Bao nhan TUNG DONG thi duong COM phai cong them ~14 byte cho moi dong G-code.
 // Voi file CAM chia rat nho (0.1mm/doan) chay nhanh, rieng phan bao nhan da an
@@ -1631,6 +1645,9 @@ static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
     unsigned long chu_ky_us = tong_us / (unsigned long)troi;
     if (chu_ky_us < CHU_KY_TOI_THIEU_US) chu_ky_us = CHU_KY_TOI_THIEU_US;
 
+    // Xoa sach truoc: cac truong khong dung cua kieu lenh nay (delay_ms, gia_tri_*)
+    // phai la 0 chu khong phai rac tren ngan xep - de con so sanh / ghi log duoc
+    memset(ra, 0, sizeof(*ra));
     ra->loai = LENH_DI_CHUYEN;
     ra->so_buoc_x = (uint32_t)buoc_x;
     ra->so_buoc_a = (uint32_t)buoc_a;
@@ -1664,6 +1681,37 @@ static void dua_buoc_vao_dich(lenh_dong_co_t buoc, bool nap)
 
 // ================== TACH TOKEN 1 DONG G-CODE ==================
 // Bo comment ';' va '(...)', tra ve so token dang <CHU><SO>
+// Doc mot so G-code: chi chap nhan dang [+-]?so[.so] - KHONG hex, KHONG mu.
+//
+// KHONG dung duoc strtod o day: G-code viet lien khong dau cach (rat pho bien
+// trong file CAM) se bi doc sai nghiem trong.
+//   "G0X100"  -> strtod doc "0X100" la SO HEX = 256  -> hieu thanh G256!
+//   "G1X1E5"  -> strtod doc "1E5" la 100000          -> mat luon chu E
+// Ca hai dang deu vo nghia trong G-code, nen cach dung la khong bao gio doc qua
+// chu cai ke tiep.
+static double doc_so_gcode(const char *p, char **ket_thuc)
+{
+    const char *dau = p;
+    if (*p == '+' || *p == '-') p++;
+    const char *dau_so = p;
+    while (isdigit((unsigned char)*p)) p++;
+    if (*p == '.') {
+        p++;
+        while (isdigit((unsigned char)*p)) p++;
+    }
+    if (p == dau_so) {          // khong co chu so nao -> khong phai so
+        *ket_thuc = (char *)dau;
+        return 0.0;
+    }
+    char tam[48];
+    size_t n = (size_t)(p - dau);
+    if (n >= sizeof(tam)) n = sizeof(tam) - 1;
+    memcpy(tam, dau, n);
+    tam[n] = '\0';
+    *ket_thuc = (char *)p;
+    return atof(tam);
+}
+
 static int tach_token_gcode(char *dong, char *chu, double *so, int toi_da)
 {
     char *cham_phay = strchr(dong, ';');
@@ -1685,7 +1733,7 @@ static int tach_token_gcode(char *dong, char *chu, double *so, int toi_da)
             char ky_tu = toupper((unsigned char)*p);
             p++;
             char *ket_thuc;
-            double gia_tri = strtod(p, &ket_thuc);
+            double gia_tri = doc_so_gcode(p, &ket_thuc);
             if (ket_thuc == p) break;  // sau chu khong co so hop le
             chu[dem] = ky_tu;
             so[dem] = gia_tri;
@@ -2243,6 +2291,36 @@ static void xu_ly_lenh_tu_pc(char *dong)
         return;
     }
 
+    // ----- PING: may tinh do xem duong truyen con thong khong -----
+    // Dung sau khi doi baud: PONG ve duoc nghia la toc do moi chay tot.
+    if (strcmp(dong_upper, "PING") == 0) {
+        han_xac_nhan_baud = 0;     // co lien lac roi, huy luoi an toan quay ve
+        printf("PONG;%u\n", baud_hien_tai);
+        return;
+    }
+
+    // ----- BAUD;<so>: nang toc do duong COM len -----
+    // Cang nhanh cang tot: bo dem cua ESP32 duoc nap day nhanh hon nhieu lan,
+    // may khong bao gio phai cho du lieu giua duong cat.
+    if (strncmp(dong_upper, "BAUD;", 5) == 0) {
+        unsigned baud = (unsigned)strtoul(dong + 5, NULL, 10);
+        if (baud < 9600 || baud > 4000000) {
+            printf("Loi: baud %u khong hop le (9600..4000000).\n", baud);
+            return;
+        }
+        if (dang_chay_chuong_trinh || dang_nap_chuong_trinh) {
+            printf("Loi: dang chay/nap chuong trinh, khong doi baud giua chung.\n");
+            return;
+        }
+        // Tra loi o toc do CU truoc da, roi hai ben cung doi
+        printf("OK_BAUD;%u\n", baud);
+        doi_baud(baud);
+        // Doi PING xac nhan; khong co thi tu quay ve 115200 (xem task giao tiep)
+        han_xac_nhan_baud = xTaskGetTickCount() + pdMS_TO_TICKS(THOI_GIAN_GIU_BAUD_MS);
+        if (han_xac_nhan_baud == 0) han_xac_nhan_baud = 1;
+        return;
+    }
+
     // ----- BUF: hoi con bao nhieu cho trong / con bao nhieu buoc chua chay -----
     if (strcmp(dong_upper, "BUF") == 0) {
         dong_tu_lan_bao = 0;
@@ -2364,7 +2442,7 @@ static void xu_ly_lenh_tu_pc(char *dong)
 static void cau_hinh_uart_pc(void)
 {
     uart_config_t cfg = {
-        .baud_rate = 115200,
+        .baud_rate = BAUD_MAC_DINH,
         .data_bits = UART_DATA_8_BITS,
         .parity    = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -2372,8 +2450,17 @@ static void cau_hinh_uart_pc(void)
         .source_clk = UART_SCLK_DEFAULT,
     };
     uart_param_config(UART_PC, &cfg);
-    // Chi can driver de doc (RX), khong doi chan vi UART0 da noi san qua USB
-    uart_driver_install(UART_PC, 1024, 0, 0, NULL, 0);
+    // Bo dem RX 4 KB: o 2 Mbaud may tinh ban ca lo vai tram dong mot luc, bo dem
+    // 1 KB cu se tran va MAT LENH neu task giao tiep ban tay mot nhip
+    uart_driver_install(UART_PC, 4096, 0, 0, NULL, 0);
+}
+
+static void doi_baud(unsigned baud)
+{
+    uart_wait_tx_done(UART_PC, pdMS_TO_TICKS(200));  // gui not cau tra loi da
+    uart_set_baudrate(UART_PC, baud);
+    uart_flush_input(UART_PC);   // bo rac sinh ra trong luc doi toc do
+    baud_hien_tai = baud;
 }
 
 // ================== TASK: GIAO TIEP VOI PC QUA USB COM ==================
@@ -2381,25 +2468,42 @@ static void task_giao_tiep_pc(void *param)
 {
     char dong[128];
     int vi_tri = 0;
-    uint8_t ky_tu;
+    // Doc theo LO thay vi tung byte: o 2 Mbaud, doc tung byte la 200.000 lan
+    // goi driver moi giay, rieng phan goi ham da an het thoi gian CPU
+    uint8_t lo[256];
 
     printf("San sang. Gui G-code chuan (G0/G1/G4/G28/G90/G91/G92/M0/M3/M5...).\n");
     printf("Dung PROG;BEGIN...PROG;END de nap chuong trinh, RUN de chay, STOP de dung.\n");
 
     while (1) {
-        // Doc tung ky tu, block THAT SU (nhuong CPU cho task/idle khac) nho
-        // dung driver UART thay vi fgets(stdin) - tranh loi task watchdog
-        int n = uart_read_bytes(UART_PC, &ky_tu, 1, portMAX_DELAY);
+        // Cho co han (khong vo han) de con kiem tra duoc han xac nhan baud
+        int n = uart_read_bytes(UART_PC, lo, sizeof(lo), pdMS_TO_TICKS(100));
+
+        // ----- Luoi an toan doi baud: khong ai xac nhan thi ve lai 115200 -----
+        if (han_xac_nhan_baud != 0 &&
+            (int)(xTaskGetTickCount() - han_xac_nhan_baud) >= 0) {
+            han_xac_nhan_baud = 0;
+            if (baud_hien_tai != BAUD_MAC_DINH) {
+                doi_baud(BAUD_MAC_DINH);
+                vi_tri = 0;
+                printf("BAUD_VE_MAC_DINH;%d: khong nhan duoc xac nhan, da quay ve %d.\n",
+                       BAUD_MAC_DINH, BAUD_MAC_DINH);
+            }
+        }
+
         if (n <= 0) continue;
 
-        if (ky_tu == '\n' || ky_tu == '\r') {
-            if (vi_tri > 0) {
-                dong[vi_tri] = '\0';
-                xu_ly_lenh_tu_pc(dong);
-                vi_tri = 0;
+        for (int i = 0; i < n; i++) {
+            uint8_t ky_tu = lo[i];
+            if (ky_tu == '\n' || ky_tu == '\r') {
+                if (vi_tri > 0) {
+                    dong[vi_tri] = '\0';
+                    xu_ly_lenh_tu_pc(dong);
+                    vi_tri = 0;
+                }
+            } else if (vi_tri < (int)sizeof(dong) - 1) {
+                dong[vi_tri++] = (char)ky_tu;
             }
-        } else if (vi_tri < (int)sizeof(dong) - 1) {
-            dong[vi_tri++] = (char)ky_tu;
         }
     }
 }

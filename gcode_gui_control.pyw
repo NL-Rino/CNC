@@ -26,7 +26,13 @@ import re
 import math
 
 COM_PORT_MAC_DINH = "COM3"
-BAUD_RATE = 115200
+# ESP32 LUON khoi dong o 115200 - toc do nao cung mo duoc, khong bao gio "chet cong".
+BAUD_KHOI_DONG = 115200
+# Sau khi ket noi, phan mem tu thuong luong nang toc do len: thu tu cao xuong
+# thap, cai nao ESP32 tra loi PONG duoc thi dung. Chip USB-UART (CP2102/CH340)
+# la cho gioi han, khong phai ESP32 - nen phai thu chu khong dat cung.
+BAUD_THU_DAN = [2000000, 1000000, 921600, 460800, 230400, 115200]
+BAUD_RATE = BAUD_KHOI_DONG   # giu ten cu cho cac cho khac trong file
 
 TOC_DO_CAT_MAC_DINH = 15.0      # F khi dang cat (RPM dong co)
 TOC_DO_NHANH_MAC_DINH = 60.0    # F khi chay khong tai (G0, ve goc)
@@ -364,6 +370,36 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
 # =============================================================================
 # GIAO DIEN
 # =============================================================================
+def nen_dong_gui(dong):
+    """Nen mot dong G-code truoc khi day xuong day COM (KHONG doi y nghia).
+
+    Duong COM la tai nguyen hiem nhat cua he thong - moi byte tiet kiem duoc la
+    bo dem ESP32 day len nhanh hon bay nhieu. Ba viec, deu khong mat mat gi:
+      - bo comment ';...' va '(...)' - may khong doc, gui xuong chi phi bang thong
+      - bo khoang trang: "G1 X10 A45" -> "G1X10A45" (bo tach token cua firmware
+        doc dung y het, xem tach_token_gcode trong main.c)
+      - bo so 0 thua o duoi: "X10.500" -> "X10.5", "X10.000" -> "X10"
+
+    Dong hien tren man hinh van giu nguyen dinh dang de nguoi doc - chi ban khi
+    GUI moi nen.
+    """
+    cham = dong.find(";")
+    if cham >= 0:
+        dong = dong[:cham]
+    while True:
+        mo = dong.find("(")
+        if mo < 0:
+            break
+        dong_ngoac = dong.find(")", mo)
+        dong = dong[:mo] + (dong[dong_ngoac + 1:] if dong_ngoac >= 0 else "")
+    dong = _BO_SO_0_THUA.sub(lambda m: m.group(0).rstrip("0").rstrip("."), dong)
+    return "".join(dong.split())
+
+
+# So thap phan co phan le: chi cat 0 thua o dang "12.3400", khong dong den "1200"
+_BO_SO_0_THUA = re.compile(r"\d+\.\d+")
+
+
 class GCodeApp:
     # ----- Tham so NAP DAN (streaming) -----
     # Gui truoc ngan nay dong roi bam RUN ngay. Firmware giu 150 buoc trong bo
@@ -373,7 +409,7 @@ class GCodeApp:
     # phong khi mot dong sinh ra nhieu buoc
     NGUONG_GUI_TIEP = 20
     # So dong toi da gui lien mot mach (khong nghi) trong mot lo
-    LO_GUI_TOI_DA = 60
+    LO_GUI_TOI_DA = 250
     # Neu ESP32 khong voi ra o trong nao trong ngan nay giay thi coi nhu may da
     # dung han (EMG, mat dien...) - huy nap thay vi treo giao dien mai mai
     CHO_TOI_DA_S = 60.0
@@ -402,6 +438,8 @@ class GCodeApp:
         self.cho_trong_esp32 = 0     # so o trong con lai trong vong dem ESP32
         self.so_dong_da_nhan = 0     # so dong ESP32 da bao nhan (OK;...)
         self.dang_nap_dan = False    # dat False de huy nap giua chung (STOP)
+        self.baud_dang_dung = BAUD_KHOI_DONG
+        self.tra_loi_pong = None     # baud ma ESP32 vua xac nhan bang PONG
         # Cac luong nen (doc serial, nap chuong trinh) KHONG duoc dung cham vao
         # giao dien Tkinter. Chung chi bo du lieu vao hang doi nay, con luong
         # giao dien tu lay ra bang root.after - day la cach an toan duy nhat.
@@ -432,9 +470,16 @@ class GCodeApp:
         self.combo_port.grid(row=0, column=1, padx=2, pady=5)
         ttk.Button(khung_ketnoi, text="Lam moi", width=8,
                    command=self._lam_moi_cong).grid(row=0, column=2, padx=3, pady=5)
+
+        ttk.Label(khung_ketnoi, text="Toc do:").grid(row=0, column=3, padx=(8, 2), pady=5)
+        self.bien_baud = tk.StringVar(value="Tu dong (nhanh nhat)")
+        ttk.Combobox(khung_ketnoi, width=17, state="readonly", textvariable=self.bien_baud,
+                     values=["Tu dong (nhanh nhat)"] + [str(b) for b in BAUD_THU_DAN]
+                     ).grid(row=0, column=4, padx=2, pady=5)
+
         self.btn_ketnoi = ttk.Button(khung_ketnoi, text="Ket noi", width=11,
                                      command=self._toggle_ket_noi)
-        self.btn_ketnoi.grid(row=0, column=3, padx=3, pady=5)
+        self.btn_ketnoi.grid(row=0, column=5, padx=3, pady=5)
 
         khung_tt = ttk.LabelFrame(khung_tren, text="Trang thai may")
         khung_tt.pack(side="left", fill="x", expand=True, padx=(4, 0))
@@ -1161,19 +1206,95 @@ class GCodeApp:
     def _ket_noi(self):
         cong = self.combo_port.get().strip()
         try:
-            self.ser = serial.Serial(cong, BAUD_RATE, timeout=1)
+            # timeout ngan: vong doc goi readline() chan that su, ban tin ve la
+            # xu ly ngay, con khi im lang thi cu 0,05s quay lai kiem tra co dung
+            self.ser = serial.Serial(cong, BAUD_KHOI_DONG, timeout=0.05)
             time.sleep(2)  # cho ESP32 khoi dong lai sau khi mo cong Serial
             self.dang_ket_noi = True
             self.btn_ketnoi.config(text="Ngat ket noi")
-            self._ghi_log(f"[He thong] Da ket noi toi {cong}", "he_thong")
+            self._ghi_log(f"[He thong] Da ket noi toi {cong} ({BAUD_KHOI_DONG} baud)",
+                          "he_thong")
             self._cap_nhat_trang_thai("SAN_SANG")
 
             self.dang_doc = True
             threading.Thread(target=self._doc_serial_lien_tuc, daemon=True).start()
-            self.root.after(300, lambda: self._gui_qua_serial("CFG;GET", ghi_log=False))
-            self.root.after(800, self._hoi_vi_tri_dinh_ky)
+            # Nang toc do duong truyen TRUOC, roi moi hoi cau hinh
+            threading.Thread(target=self._thuong_luong_baud_nen, daemon=True).start()
         except Exception as loi:
             messagebox.showerror("Loi ket noi", f"Khong the ket noi toi {cong}:\n{loi}")
+
+    # ---------------------------------------------------------
+    # THUONG LUONG TOC DO DUONG COM
+    # ---------------------------------------------------------
+    def _thuong_luong_baud_nen(self):
+        """Chay o LUONG NEN. Nang baud len muc cao nhat ma may THUC SU chay duoc.
+
+        Cach lam an toan tuyet doi - khong bao giờ mat lien lac:
+          1. Gui BAUD;<n>, ESP32 tra OK_BAUD roi doi toc do
+          2. May tinh cung doi, gui PING
+          3. Co PONG  -> giu toc do nay
+             Khong co -> may tinh ve 115200; ESP32 cung tu ve 115200 sau 4 giay
+                         (luoi an toan trong firmware), roi thu muc thap hon
+        """
+        bao = self.hang_doi_su_kien.put
+        chon = self.bien_baud.get()
+        if chon != "Tu dong (nhanh nhat)":
+            try:
+                danh_sach = [int(chon)]
+            except ValueError:
+                danh_sach = [BAUD_KHOI_DONG]
+        else:
+            danh_sach = BAUD_THU_DAN
+
+        for baud in danh_sach:
+            if not self.dang_ket_noi:
+                return
+            if baud == BAUD_KHOI_DONG:
+                break                     # dang o san toc do nay roi
+            if self._thu_mot_baud(baud):
+                self.baud_dang_dung = baud
+                bao(("log", f"[He thong] Da nang toc do duong COM len {baud} baud "
+                            f"({baud // BAUD_KHOI_DONG}x nhanh hon truoc)."))
+                break
+            bao(("log", f"[He thong] {baud} baud khong on dinh, thu muc thap hon..."))
+            # ESP32 tu ve 115200 sau 4 giay - cho no lang han roi thu tiep
+            time.sleep(4.5)
+        else:
+            bao(("log", f"[He thong] Giu nguyen {BAUD_KHOI_DONG} baud."))
+
+        self._gui_qua_serial("CFG;GET", ghi_log=False)
+        self.hang_doi_su_kien.put(("bat_dau_hoi_vi_tri", ""))
+
+    def _thu_mot_baud(self, baud):
+        """Thu doi sang mot toc do. True = da doi thanh cong va con lien lac duoc."""
+        try:
+            self.tra_loi_pong = None
+            self.ser.write(f"BAUD;{baud}\n".encode())
+            self.ser.flush()
+            time.sleep(0.25)              # cho ESP32 tra loi va doi baud
+            self.ser.baudrate = baud      # may tinh doi theo
+            time.sleep(0.15)
+            self.ser.reset_input_buffer()
+
+            for _ in range(3):            # PING vai lan phong khi rot mat 1 goi
+                self.tra_loi_pong = None
+                self.ser.write(b"PING\n")
+                self.ser.flush()
+                han = time.time() + 0.5
+                while time.time() < han:
+                    if self.tra_loi_pong == baud:
+                        return True
+                    time.sleep(0.01)
+            # That bai: ve lai toc do khoi dong, doi ESP32 tu ve theo
+            self.ser.baudrate = BAUD_KHOI_DONG
+            self.ser.reset_input_buffer()
+            return False
+        except Exception:
+            try:
+                self.ser.baudrate = BAUD_KHOI_DONG
+            except Exception:
+                pass
+            return False
 
     def _hoi_vi_tri_dinh_ky(self):
         """Hoi POS moi 2 giay khi may DANG RANH, de vi tri va so xung luon dung.
@@ -1198,48 +1319,56 @@ class GCodeApp:
 
     def _doc_serial_lien_tuc(self):
         """Chay o LUONG NEN - chi duoc bo du lieu vao hang doi, khong dung giao dien."""
+        # Truoc day vong nay poll in_waiting roi sleep(20ms) -> nhieu nhat chi xu ly
+        # duoc 50 ban tin moi giay, tro thanh nut co that su khi nang baud.
+        # Nay doc CHAN (readline co timeout ngan): pyserial nha GIL trong luc cho
+        # nen khong ton CPU, ma ban tin ve la xu ly ngay lap tuc.
         while self.dang_doc and self.ser and self.ser.is_open:
             try:
-                if self.ser.in_waiting:
-                    dong = self.ser.readline().decode(errors="ignore").strip()
-                    if dong:
-                        # Dat ket qua nap ngay tai day de luong nap thay duoc lien,
-                        # khong phai cho luong giao dien xu ly xong
-                        if dong.startswith("OK_NAP"):
-                            self.ket_qua_nap = "OK"
-                            try:   # "OK_NAP;<so_dong>;<so_buoc>: ..."
-                                self.so_dong_da_nhan = int(dong.split(";")[1])
-                            except (IndexError, ValueError):
-                                pass
-                        elif dong.startswith("LOI_NAP"):
-                            self.ket_qua_nap = "LOI"
-                        # --- Bao nhan tung dong khi NAP DAN ---
-                        # "OK;<cho_trong>;<da_nhan>" tra ve sau MOI dong G-code.
-                        # Day la co so de dieu tiet luu luong: may tinh chi gui
-                        # tiep khi ESP32 con cho, nho vay bo dem khong bao gio
-                        # tran ma cung khong bao gio can.
-                        # "OK;<cho_trong>;<so_dong_da_nhan>" - ESP32 bao nhan theo
-                        # LO (moi 8 dong) chu khong tung dong, de tiet kiem bang
-                        # thong duong COM. So dong lay THANG tu ban tin nen bao
-                        # theo lo hay tung dong deu cho ket qua nhu nhau.
-                        if dong.startswith("OK;") or dong.startswith("BUF;"):
-                            phan = dong.split(";")
-                            try:
-                                self.cho_trong_esp32 = int(phan[1])
-                                self.so_dong_da_nhan = int(phan[2])
-                            except (IndexError, ValueError):
-                                pass
-                            continue      # khong lam ngap khung log
-                        if dong.startswith("OK_BEGIN;"):
-                            try:
-                                self.cho_trong_esp32 = int(dong.split(";")[1])
-                            except (IndexError, ValueError):
-                                pass
-                            continue
-                        self.hang_doi_su_kien.put(("esp32", dong))
+                dong = self.ser.readline().decode(errors="ignore").strip()
+                if dong:
+                    # Dat ket qua nap ngay tai day de luong nap thay duoc lien,
+                    # khong phai cho luong giao dien xu ly xong
+                    if dong.startswith("PONG;"):
+                        try:
+                            self.tra_loi_pong = int(dong.split(";")[1])
+                        except (IndexError, ValueError):
+                            pass
+                        continue
+                    if dong.startswith("OK_NAP"):
+                        self.ket_qua_nap = "OK"
+                        try:   # "OK_NAP;<so_dong>;<so_buoc>: ..."
+                            self.so_dong_da_nhan = int(dong.split(";")[1])
+                        except (IndexError, ValueError):
+                            pass
+                    elif dong.startswith("LOI_NAP"):
+                        self.ket_qua_nap = "LOI"
+                    # --- Bao nhan tung dong khi NAP DAN ---
+                    # "OK;<cho_trong>;<da_nhan>" tra ve sau MOI dong G-code.
+                    # Day la co so de dieu tiet luu luong: may tinh chi gui
+                    # tiep khi ESP32 con cho, nho vay bo dem khong bao gio
+                    # tran ma cung khong bao gio can.
+                    # "OK;<cho_trong>;<so_dong_da_nhan>" - ESP32 bao nhan theo
+                    # LO (moi 8 dong) chu khong tung dong, de tiet kiem bang
+                    # thong duong COM. So dong lay THANG tu ban tin nen bao
+                    # theo lo hay tung dong deu cho ket qua nhu nhau.
+                    if dong.startswith("OK;") or dong.startswith("BUF;"):
+                        phan = dong.split(";")
+                        try:
+                            self.cho_trong_esp32 = int(phan[1])
+                            self.so_dong_da_nhan = int(phan[2])
+                        except (IndexError, ValueError):
+                            pass
+                        continue      # khong lam ngap khung log
+                    if dong.startswith("OK_BEGIN;"):
+                        try:
+                            self.cho_trong_esp32 = int(dong.split(";")[1])
+                        except (IndexError, ValueError):
+                            pass
+                        continue
+                    self.hang_doi_su_kien.put(("esp32", dong))
             except Exception:
                 break
-            time.sleep(0.02)
 
     def _lay_su_kien_tu_hang_doi(self):
         """Chay o LUONG GIAO DIEN - lay du lieu cac luong nen gui len va hien thi."""
@@ -1250,6 +1379,8 @@ class GCodeApp:
                     self._xu_ly_dong_tu_esp32(noi_dung)
                 elif loai == "log":
                     self._ghi_log(noi_dung, "he_thong")
+                elif loai == "bat_dau_hoi_vi_tri":
+                    self._hoi_vi_tri_dinh_ky()
                 elif loai == "nap_that_bai":
                     self._nap_that_bai(noi_dung)
         except queue.Empty:
@@ -1456,19 +1587,26 @@ class GCodeApp:
         """
         bao = self.hang_doi_su_kien.put
         tong = len(cac_dong)
+        # Nen truoc ca bai (nhanh, chi vai mili giay) de luc gui khong phai
+        # tinh toan gi nua - vong gui phai gon nhat co the
+        cac_dong_nen = [nen_dong_gui(d) for d in cac_dong]
+        cac_dong_nen = [d if d else "G4P0" for d in cac_dong_nen]  # phong dong rong
+        byte_goc = sum(len(d) + 1 for d in cac_dong)
+        byte_nen = sum(len(d) + 1 for d in cac_dong_nen)
         try:
             self.cho_trong_esp32 = 0
             self.so_dong_da_nhan = 0
             self.dang_nap_dan = True
 
-            bao(("log", f"[He thong] Nap dan: gui truoc {self.SO_DONG_NAP_TRUOC} dong "
-                        f"roi vua chay vua nap (tong {tong} dong)."))
+            bao(("log", f"[He thong] Nap dan {self.baud_dang_dung} baud: gui truoc "
+                        f"{self.SO_DONG_NAP_TRUOC} dong roi vua chay vua nap "
+                        f"(tong {tong} dong, {byte_goc} -> {byte_nen} byte sau khi nen)."))
             self.ser.write(b"PROG;BEGIN\n")
 
             # Cho ESP32 xac nhan da san sang (OK_BEGIN) - cung la luc biet suc chua
             han = time.time() + 3.0
             while time.time() < han and self.cho_trong_esp32 <= 0:
-                time.sleep(0.01)
+                time.sleep(0.001)
             if self.cho_trong_esp32 <= 0:
                 bao(("nap_that_bai", "ESP32 khong tra loi PROG;BEGIN. Kiem tra lai ket noi."))
                 return
@@ -1500,7 +1638,7 @@ class GCodeApp:
                     # biet bo dem da voi ra -> ket cung ca hai ben. Vi vay phai
                     # CHU DONG hoi bang lenh BUF trong luc cho.
                     self.ser.write(b"BUF\n")
-                    time.sleep(0.02)
+                    time.sleep(0.003)
                     if time.time() - moc_hoi_buf > self.CHO_TOI_DA_S:
                         bao(("nap_that_bai",
                              "ESP32 khong voi bo dem sau %.0f giay - may co the da dung. "
@@ -1513,7 +1651,7 @@ class GCodeApp:
                 # bao khong lam tran nen khong can chen sleep - day chinh la cho
                 # truoc kia tu lam cham minh 4ms/dong.
                 lo = min(cho_thuc, self.LO_GUI_TOI_DA, tong - da_gui)
-                goi = "".join(d + "\n" for d in cac_dong[da_gui:da_gui + lo])
+                goi = "".join(d + "\n" for d in cac_dong_nen[da_gui:da_gui + lo])
                 self.ser.write(goi.encode())
                 da_gui += lo
 
@@ -1524,7 +1662,7 @@ class GCodeApp:
                     while (time.time() < han and
                            self.so_dong_da_nhan < min(self.SO_DONG_NAP_TRUOC, tong) and
                            self.ket_qua_nap != "LOI"):
-                        time.sleep(0.005)
+                        time.sleep(0.001)
                     if self.ket_qua_nap == "LOI":
                         bao(("nap_that_bai",
                              "ESP32 tu choi chuong trinh (LOI_NAP). Xem log de biet dong nao sai."))

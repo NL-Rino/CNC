@@ -344,13 +344,54 @@ trong khi mo plasma van bat -> **thung phoi**. Firmware xu ly:
   `LOI_CAN_BO_DEM`. Khong cho mot mili giay nao
 - Chua cat -> cho toi da `THOI_GIAN_CHO_NAP_MS` (1 giay) roi moi tam dung
 
-Do thuc te (gia lap dung baud, tinh ca luu luong 2 chieu):
+### Vat kiet bang thong duong COM
 
-| Bai | Baud | Tu bam CHAY den luc dong co chay | Can bo dem |
+Duong COM la tai nguyen hiem nhat cua he thong. Bon viec da lam:
+
+**1. Tu thuong luong toc do.** ESP32 **luon khoi dong o 115200** nen khong bao
+gio "chet cong". Vua ket noi xong, phan mem thu nang dan tu 2000000 xuong, cai
+nao chay duoc thi dung:
+
+```
+PC  -> BAUD;921600      ESP32 -> OK_BAUD;921600   (roi ca hai cung doi)
+PC  -> PING             ESP32 -> PONG;921600      (xac nhan con lien lac)
+```
+
+Neu PING khong ve (chip USB-UART khong chiu noi, day nhieu), may tinh quay lai
+115200 va thu muc thap hon. ESP32 cung **tu quay ve 115200 sau 4 giay** neu
+khong ai xac nhan - luoi an toan trong firmware, khong the mat lien lac vinh vien.
+Chon tay duoc trong o *Toc do* canh cong COM.
+
+**2. Nen dong G-code truoc khi gui** (khong doi y nghia gi):
+bo comment, bo dau cach, bo so 0 thua o duoi.
+`G1 X10.500 A45.000 F30` -> `G1X10.5A45F30`. **Tiet kiem ~46% byte.**
+Ban hien tren man hinh van giu nguyen dinh dang de nguoi doc - chi ban khi GUI moi nen.
+
+**3. Vong doc serial ben may tinh doc CHAN.** Truoc day no poll `in_waiting`
+roi `sleep(20ms)` - nhieu nhat 50 ban tin moi giay, thanh nut co that su khi
+nang baud. Nay dung `readline()` chan (pyserial nha GIL nen khong ton CPU).
+
+**4. ESP32 doc UART theo lo 256 byte** thay vi tung byte, bo dem RX 1 KB -> 4 KB.
+O 2 Mbaud, doc tung byte la 200.000 lan goi driver moi giay.
+
+### Do thuc te
+
+Bai 1207 dong, doan cat 0,1 mm, chay 3000 mm/phut (gia lap dung baud, tinh ca
+luu luong 2 chieu):
+
+| Baud | Tu bam CHAY den luc dong co chay | Nap xong ca bai | Can bo dem |
 |---|---|---|---|
-| 607 dong, doan vai mm, 800 mm/phut | 115200 | ~0,6 s | 0 lan |
-| 1207 dong, doan 0,1 mm, 3000 mm/phut | 115200 | ~0,6 s | 0 lan |
-| 1207 dong, doan 0,1 mm, 3000 mm/phut | 921600 | ~0,35 s | 0 lan |
+| 115200 | 313 ms | 1,6 s | 1 lan |
+| 460800 | 82 ms | 0,4 s | 0 lan |
+| 921600 | **44 ms** | **0,2 s** | 0 lan |
+| 2000000 | **24 ms** | **0,1 s** | 0 lan |
+
+(Truoc khi lam nap dan: phai cho nap **het** file moi bam chay duoc, 300 buoc
+mat 1836 ms - va bai 1207 dong thi khong nap noi.)
+
+115200 con **cham hon toc do cat** voi file CAM chia nho: bai tren can 1,6 giay
+de nap ma chi mat 2,5 giay de cat het - nen no cham bo dem 1 lan. Tu 460800 tro
+len la du du.
 
 ## 13. Gioi han hien tai
 
