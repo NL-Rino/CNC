@@ -176,7 +176,29 @@
 // Truc X (KEO): 0.2 vong = 1mm  =>  1 vong = 5mm
 #define DEFAULT_MM_MOI_VONG_TRUC_X    5.0
 #define CHU_KY_TOI_THIEU_US   30
-#define MAX_BUOC_CHUONG_TRINH 300
+// So buoc chua duoc trong RAM. Truoc day chuong trinh phai nap HET vao day roi
+// moi chay duoc, nen day cung la gioi han do dai chuong trinh. Nay may tinh nap
+// dan (streaming) nen day chi con la DO SAU BO DEM - chuong trinh dai bao nhieu
+// cung chay duoc.
+// 1200 buoc x 56 byte = 67 KB (truoc day chi 300 buoc ma ton 33 KB vi luu 2 ban:
+// 1 ban trong mang chuong trinh + 1 ban trong hang doi FreeRTOS)
+#define SUC_CHUA_BUOC         1200
+// May tinh nap day bao nhieu buoc roi moi bat dau chay
+#define BUOC_DAY_TRUOC_KHI_CHAY 150
+
+// Khi dang chay ma vong dem can (may tinh nap khong kip): neu mo cat DANG BAT
+// thi tat va dung NGAY (khong cho mot mili giay nao - phoi se thung). Neu chua
+// cat thi cho toi da ngan nay roi moi tam dung, phong khi duong truyen tre nhip.
+#define THOI_GIAN_CHO_NAP_MS  1000
+
+// ----- NHIP BAO NHAN khi nap dan -----
+// Bao nhan TUNG DONG thi duong COM phai cong them ~14 byte cho moi dong G-code.
+// Voi file CAM chia rat nho (0.1mm/doan) chay nhanh, rieng phan bao nhan da an
+// het bang thong va lam may tinh nap khong kip -> can bo dem giua duong cat.
+// Vi vay khi bo dem con RONG RAI thi chi bao nhan moi NHIP_BAO_NHAN dong;
+// khi bo dem sap day thi bao tung dong de dieu tiet cho chinh xac.
+#define NHIP_BAO_NHAN         8
+#define NGUONG_BAO_TUNG_DONG  120
 #define RPM_HOME_MAC_DINH     20.0
 
 // ----- Tang/giam toc (acceleration ramp) -----
@@ -537,14 +559,19 @@ typedef enum {
 
 static volatile trang_thai_chay_t trang_thai_chay = CHAY_BINH_THUONG;
 
-// So buoc con lai cua chuong trinh dang chay. Dat = so buoc luc RUN, task dong
-// co tru dan sau moi buoc. Khi ve 0 thi in "XONG_CHUONG_TRINH" - nho vay PC moi
-// biet CHUONG TRINH da het (truoc day PC tuong da xong ngay sau buoc DAU TIEN
-// vi chi thay dong "Hoan thanh", nen tat mat nut PAUSE giua chung).
-static volatile int so_buoc_con_lai = 0;
+// Dang chay mot chuong trinh (khac voi JOG / lenh don le). Chuong trinh duoc
+// coi la XONG khi: may tinh da gui PROG;END va vong dem da rong sach.
 static volatile bool dang_chay_chuong_trinh = false;
 
-static QueueHandle_t hang_doi_lenh_dong_co;
+// Trang thai THAT cua relay mo cat. Can biet chinh xac de xu ly "can bo dem":
+// neu mo dang bat ma may dung yen thi phoi bi thung ngay -> phai tat tuc thi.
+static volatile bool plasma_dang_bat = false;
+
+static inline void dat_plasma(int muc)
+{
+    gpio_set_level(g_cfg.pin_relay_plasma, muc);
+    plasma_dang_bat = (muc != 0);
+}
 
 typedef enum {
     LENH_DI_CHUYEN  = 0, // di chuyen PHOI HOP dong thoi X va/hoac A
@@ -612,9 +639,128 @@ static long doi_do_sang_xung(double do_goc)
 }
 
 // ================== BO NHO CHUONG TRINH (nap theo lo) ==================
-static lenh_dong_co_t chuong_trinh[MAX_BUOC_CHUONG_TRINH];
-static int so_buoc_da_nap = 0;
+// ================== VONG DEM BUOC LENH ==================
+// Mot NGUOI GHI duy nhat (task giao tiep, nhan 0) va mot NGUOI DOC duy nhat
+// (task dong co, nhan 1). Moi ben chi ghi vao chi so cua rieng minh nen khong
+// can khoa - day la kieu vong dem SPSC chuan, an toan tren chip 2 nhan.
+static lenh_dong_co_t vong_dem[SUC_CHUA_BUOC];
+static volatile int vd_ghi = 0;   // CHI task giao tiep duoc doi
+static volatile int vd_doc = 0;   // CHI task dong co duoc doi
+// May tinh da gui het chuong trinh chua (PROG;END). Can de phan biet "het bai"
+// voi "may tinh nap khong kip" - hai truong hop nay xu ly khac han nhau.
+static volatile bool het_chuong_trinh = false;
+static int so_buoc_da_nap = 0;    // dem tong so buoc da nhan, chi de bao cao
+static int so_dong_da_nap = 0;    // dem so DONG G-code da nhan (de may tinh doi chieu)
+
+static int vong_dem_dang_co(void)
+{
+    int d = vd_ghi - vd_doc;
+    return d < 0 ? d + SUC_CHUA_BUOC : d;
+}
+
+// Con nhan them duoc bao nhieu buoc. Luon chua 1 o cho lenh PAUSE tra phan
+// con lai vao dau vong dem, va 1 o de phan biet day voi rong.
+static int vong_dem_cho_trong(void)
+{
+    int con = SUC_CHUA_BUOC - 2 - vong_dem_dang_co();
+    return con > 0 ? con : 0;
+}
+
+static bool vong_dem_them(const lenh_dong_co_t *buoc)
+{
+    if (vong_dem_cho_trong() <= 0) return false;
+    vong_dem[vd_ghi] = *buoc;
+    vd_ghi = (vd_ghi + 1) % SUC_CHUA_BUOC;
+    return true;
+}
+
+static bool vong_dem_lay(lenh_dong_co_t *ra)
+{
+    if (vong_dem_dang_co() == 0) return false;
+    *ra = vong_dem[vd_doc];
+    vd_doc = (vd_doc + 1) % SUC_CHUA_BUOC;
+    return true;
+}
+
+// Xem buoc ke tiep MA KHONG lay ra - dung de biet co con doan cat phia sau
+// khong, tu do quyet dinh co giam toc hay chay thang (noi_lien_sau)
+static bool vong_dem_xem_truoc(lenh_dong_co_t *ra)
+{
+    if (vong_dem_dang_co() == 0) return false;
+    *ra = vong_dem[vd_doc];
+    return true;
+}
+
+// Tra phan con lai cua doan dang cat vao DAU vong dem khi bam PAUSE giua chung.
+// Chi task dong co goi ham nay, ma no cung la nguoi duy nhat doi vd_doc nen an toan.
+static bool vong_dem_tra_lai(const lenh_dong_co_t *buoc)
+{
+    int moi = (vd_doc - 1 + SUC_CHUA_BUOC) % SUC_CHUA_BUOC;
+    if (moi == vd_ghi) return false;   // that su het cho
+    vong_dem[moi] = *buoc;
+    vd_doc = moi;
+    return true;
+}
+
+// ================== NHIN TRUOC 1 BUOC (look-ahead) ==================
+// Truoc day chuong trinh duoc nap HET vao RAM roi mot ham quet ca mang de
+// danh dau "noi_lien_sau". Khi NAP DAN (streaming) thi khong con ca mang de
+// quet nua, nen ben GHI giu lai DUNG 1 buoc: khi buoc ke tiep duoc phan tich
+// xong moi biet buoc dang giu co phai noi lien khong, luc do moi day vao vong
+// dem. Cach nay cho ket qua Y HET ban quet ca mang, chi tre dung 1 buoc, va
+// khong co tranh chap voi task dong co (buoc dang giu chua he vao vong dem).
+static lenh_dong_co_t buoc_dang_giu;
+static bool co_buoc_dang_giu = false;
+
+static void vong_dem_xoa_sach(void)
+{
+    vd_doc = vd_ghi;
+    het_chuong_trinh = false;
+    co_buoc_dang_giu = false;
+    so_buoc_da_nap = 0;
+    so_dong_da_nap = 0;
+}
+
+// Day 1 buoc vao vong dem, doi neu con day. May tinh da co dieu tiet luu luong
+// (chi gui khi con cho) nen truong hop nay hiem, cho toi da ~2 giay roi bao loi.
+static bool vong_dem_them_cho(const lenh_dong_co_t *buoc)
+{
+    for (int lan = 0; lan < 200; lan++) {
+        if (vong_dem_them(buoc)) return true;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    return false;
+}
+
+// Nap 1 buoc theo kieu dong chay: day buoc DANG GIU (sau khi biet no co noi
+// lien voi buoc moi nay khong), roi giu buoc moi lai cho luot sau.
+static bool nap_buoc_theo_dong(const lenh_dong_co_t *buoc)
+{
+    bool ok = true;
+    if (co_buoc_dang_giu) {
+        buoc_dang_giu.noi_lien_sau =
+            (buoc_dang_giu.loai == LENH_DI_CHUYEN && buoc_dang_giu.dang_cat &&
+             buoc->loai == LENH_DI_CHUYEN && buoc->dang_cat);
+        ok = vong_dem_them_cho(&buoc_dang_giu);
+    }
+    buoc_dang_giu = *buoc;
+    buoc_dang_giu.noi_lien_sau = false;
+    co_buoc_dang_giu = true;
+    so_buoc_da_nap++;
+    return ok;
+}
+
+// Het chuong trinh: day not buoc cuoi (luon giam toc binh thuong vi khong con
+// doan cat nao phia sau)
+static bool xa_buoc_dang_giu(void)
+{
+    if (!co_buoc_dang_giu) return true;
+    buoc_dang_giu.noi_lien_sau = false;
+    co_buoc_dang_giu = false;
+    return vong_dem_them_cho(&buoc_dang_giu);
+}
 static bool dang_nap_chuong_trinh = false;
+static int dong_tu_lan_bao = 0;   // so dong chua bao nhan (xem NHIP_BAO_NHAN)
 static bool co_loi_khi_nap = false;
 
 // ----- Trang thai modal G-code khi dang nap 1 chuong trinh -----
@@ -721,7 +867,7 @@ static void cau_hinh_ngo_ra(void)
     };
     gpio_config(&cfg_ra);
 
-    gpio_set_level(g_cfg.pin_relay_plasma, 0);
+    dat_plasma(0);
     dat_muc(g_cfg.pin_den_dang_chay, 0);
     dat_muc(g_cfg.pin_den_xong, 0);
     dat_muc(g_cfg.pin_den_loi, 0);
@@ -917,24 +1063,53 @@ static void xu_ly_dieu_khien_tay(void)
 static void task_dong_co(void *param)
 {
     lenh_dong_co_t lenh;
+    int cho_nap_ms = 0;   // da doi may tinh nap tiep bao lau (chong can bo dem)
 
     while (1) {
-        // Bao PC biet chuong trinh da chay HET (khong con buoc nao trong hang doi).
-        // Phai dat o DAY - truoc khi block cho lenh moi - vi ben duoi co rat nhieu
-        // duong "continue" khac nhau.
-        if (dang_chay_chuong_trinh && so_buoc_con_lai <= 0) {
-            dang_chay_chuong_trinh = false;
-            printf("XONG_CHUONG_TRINH: da chay het chuong trinh. Vi tri: X=%.2f A=%.2f\n",
-                   doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
-        }
-
-        // Cho lenh voi thoi han ngan (khong cho vo han) de khi hang doi rong
-        // con quay lai phuc vu BANG DIEU KHIEN TAY
-        if (xQueueReceive(hang_doi_lenh_dong_co, &lenh, pdMS_TO_TICKS(20)) != pdTRUE) {
-            xu_ly_dieu_khien_tay();
+        if (!vong_dem_lay(&lenh)) {
+            // --- Vong dem rong ---
+            if (dang_chay_chuong_trinh) {
+                if (het_chuong_trinh) {
+                    // May tinh da gui het VA da chay het -> XONG that su
+                    dang_chay_chuong_trinh = false;
+                    cho_nap_ms = 0;
+                    printf("XONG_CHUONG_TRINH: da chay het chuong trinh. Vi tri: X=%.2f A=%.2f\n",
+                           doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
+                } else if (trang_thai_chay == CHAY_BINH_THUONG && !co_dung_khan_cap) {
+                    // CAN BO DEM: may tinh chua gui het ma da het buoc de chay.
+                    // May dung yen giua duong cat -> neu mo con bat se thung phoi.
+                    if (plasma_dang_bat) {
+                        dat_plasma(0);
+                        trang_thai_chay = DANG_TAM_DUNG;
+                        printf("LOI_CAN_BO_DEM: may tinh nap khong kip, da TAT MO CAT va "
+                               "tam dung tai X=%.2f A=%.2f. Gui RESUME de chay tiep.\n",
+                               doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
+                        cho_nap_ms = 0;
+                    } else {
+                        // Chua cat thi cho them chut, duong truyen co the dang tre
+                        cho_nap_ms += 20;
+                        if (cho_nap_ms >= THOI_GIAN_CHO_NAP_MS) {
+                            trang_thai_chay = DANG_TAM_DUNG;
+                            printf("LOI_CAN_BO_DEM: may tinh khong nap tiep sau %d ms, "
+                                   "da tam dung. Gui RESUME de chay tiep.\n",
+                                   THOI_GIAN_CHO_NAP_MS);
+                            cho_nap_ms = 0;
+                        }
+                    }
+                }
+            }
+            // Bang dieu khien tay chi duoc dung khi KHONG dang chay chuong trinh,
+            // hoac dang tam dung. Truoc kia ca chuong trinh nam san trong hang doi
+            // nen no khong bao gio rong giua chung; nay nap dan thi vong dem CO THE
+            // rong trong choc lat -> phai chan, khong thi lo cham nut la may nhich
+            // giua duong cat.
+            if (!dang_chay_chuong_trinh || trang_thai_chay == DANG_TAM_DUNG) {
+                xu_ly_dieu_khien_tay();
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
-        if (so_buoc_con_lai > 0) so_buoc_con_lai--;
+        cho_nap_ms = 0;
 
         if (co_dung_khan_cap) {
             printf("Loi: dang o trang thai dung khan cap, bo qua buoc.\n");
@@ -954,12 +1129,12 @@ static void task_dong_co(void *param)
 
         // ----- Bat / tat mo cat plasma (M3/M4/M5) -----
         if (lenh.loai == LENH_PLASMA_ON) {
-            gpio_set_level(g_cfg.pin_relay_plasma, 1);
+            dat_plasma(1);
             printf("PLASMA_ON: da bat mo cat.\n");
             continue;
         }
         if (lenh.loai == LENH_PLASMA_OFF) {
-            gpio_set_level(g_cfg.pin_relay_plasma, 0);
+            dat_plasma(0);
             printf("PLASMA_OFF: da tat mo cat.\n");
             continue;
         }
@@ -975,7 +1150,7 @@ static void task_dong_co(void *param)
 
         // ----- Tam dung cho nguoi van hanh (M0/M1) -----
         if (lenh.loai == LENH_TAM_DUNG) {
-            gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung cho
+            dat_plasma(0);  // AN TOAN: tat mo cat khi dung cho
             trang_thai_chay = DANG_TAM_DUNG;
             printf("M0_PAUSED: da tat mo cat, tam dung theo lenh M0/M1 tai X=%.2f A=%.2f. "
                    "Gui RESUME de chay tiep.\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
@@ -1069,7 +1244,7 @@ static void task_dong_co(void *param)
                 xung_dung_gap = 0;
                 bi_tam_dung_giua = (trang_thai_chay == YEU_CAU_TAM_DUNG);
                 // AN TOAN: tat mo cat ngay khi bat dau dung, khong doi giam toc xong
-                gpio_set_level(g_cfg.pin_relay_plasma, 0);
+                dat_plasma(0);
             }
 
             // --- Quyet dinh truc nao can xuat xung o vong lap nay ---
@@ -1177,11 +1352,9 @@ static void task_dong_co(void *param)
                 lenh_dong_co_t phan_du = lenh;
                 phan_du.so_buoc_x = con_x;
                 phan_du.so_buoc_a = con_a;
-                if (xQueueSendToFront(hang_doi_lenh_dong_co, &phan_du,
-                                      pdMS_TO_TICKS(100)) == pdTRUE) {
-                    so_buoc_con_lai++;   // buoc nay se duoc chay lai
-                } else {
-                    printf("Loi: khong tra duoc phan con lai vao hang doi, "
+                // Tra vao DAU vong dem de RESUME chay tiep dung cho vua dung
+                if (!vong_dem_tra_lai(&phan_du)) {
+                    printf("Loi: khong tra duoc phan con lai vao vong dem, "
                            "doan nay se bi thieu %lu xung X va %lu xung A.\n",
                            (unsigned long)con_x, (unsigned long)con_a);
                 }
@@ -1217,7 +1390,7 @@ static void task_dong_co(void *param)
         // du, chi can chuyen sang tam dung.
         if (trang_thai_chay == YEU_CAU_TAM_DUNG) {
             trang_thai_chay = DANG_TAM_DUNG;
-            gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat khi dung
+            dat_plasma(0);  // AN TOAN: tat mo cat khi dung
             printf("PAUSED: da tat mo cat, tam dung o vi tri X=%.2f A=%.2f. "
                    "Gui RESUME de chay tiep (nho bat lai mo cat neu can).\n",
                    doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
@@ -1229,7 +1402,7 @@ static void task_dong_co(void *param)
 // Dung chung cho ca lenh RUN tu may tinh lan nut START tren bang dieu khien
 static void bat_dau_chay_chuong_trinh(const char *nguon)
 {
-    if (so_buoc_da_nap == 0) {
+    if (vong_dem_dang_co() == 0 && !co_buoc_dang_giu) {
         printf("Loi: chua co chuong trinh nao duoc nap "
                "(dung PROG;BEGIN...PROG;END truoc). Nguon: %s\n", nguon);
         return;
@@ -1238,24 +1411,16 @@ static void bat_dau_chay_chuong_trinh(const char *nguon)
         printf("Loi: dang o trang thai dung khan cap, khong the chay. Nguon: %s\n", nguon);
         return;
     }
-    trang_thai_chay = CHAY_BINH_THUONG;  // reset trang thai truoc khi chay moi
-
-    // Dat bo dem TRUOC khi day vao hang doi: task dong co bat dau chay ngay
-    // khi co buoc dau tien, neu dat sau thi no da tru mat mot so buoc roi
-    so_buoc_con_lai = so_buoc_da_nap;
-    dang_chay_chuong_trinh = true;
-
-    int da_day = 0;
-    for (int i = 0; i < so_buoc_da_nap; i++) {
-        if (xQueueSend(hang_doi_lenh_dong_co, &chuong_trinh[i], pdMS_TO_TICKS(100)) == pdTRUE) {
-            da_day++;
-        } else {
-            printf("Loi: hang doi day, chi day duoc %d/%d buoc.\n", da_day, so_buoc_da_nap);
-            so_buoc_con_lai -= (so_buoc_da_nap - da_day);  // tru phan khong day duoc
-            break;
-        }
+    if (dang_chay_chuong_trinh) {
+        printf("Loi: chuong trinh dang chay roi. Nguon: %s\n", nguon);
+        return;
     }
-    printf("RUNNING: da day %d buoc vao hang doi, dang chay... (%s)\n", da_day, nguon);
+    // KHONG con buoc "day ca chuong trinh vao hang doi" nua: cac buoc DA nam
+    // san trong vong dem tu luc nap, va may tinh van dang nap tiep phan sau.
+    trang_thai_chay = CHAY_BINH_THUONG;  // reset trang thai truoc khi chay moi
+    dang_chay_chuong_trinh = true;
+    printf("RUNNING: dang chay (%d buoc san trong bo dem)... (%s)\n",
+           vong_dem_dang_co(), nguon);
 }
 
 // ================== TASK: GIAM SAT AN TOAN ==================
@@ -1266,7 +1431,7 @@ static void task_an_toan(void *param)
     while (1) {
         if (co_dung_khan_cap && !trang_thai_truoc) {
             dat_muc(g_cfg.pin_den_loi, 1);
-            gpio_set_level(g_cfg.pin_relay_plasma, 0);
+            dat_plasma(0);
             printf("Loi: %s\n",
                    ngo_vao_dang_kich(NGO_VAO_EMG) ? "DUNG KHAN CAP (EMG)" :
                    ngo_vao_dang_kich(NGO_VAO_LIMIT_X_AM)
@@ -1473,8 +1638,8 @@ static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
     ra->huong_a = (delta_a_do > 0);
     ra->chu_ky_us = (uint32_t)chu_ky_us;
     // Mac dinh coi la doan chay khong tai; ben goi se danh dau lai neu dang cat.
-    // noi_lien_sau duoc tinh sau khi nap xong ca chuong trinh (xem
-    // tinh_noi_lien_chuong_trinh)
+    // noi_lien_sau duoc quyet dinh khi buoc KE TIEP duoc nap (xem
+    // nap_buoc_theo_dong)
     ra->dang_cat = false;
     ra->noi_lien_sau = false;
     return true;
@@ -1484,34 +1649,15 @@ static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
 static void dua_buoc_vao_dich(lenh_dong_co_t buoc, bool nap)
 {
     if (nap) {
-        if (so_buoc_da_nap >= MAX_BUOC_CHUONG_TRINH) {
-            printf("Loi: chuong trinh vuot qua gioi han %d buoc.\n", MAX_BUOC_CHUONG_TRINH);
+        // NAP DAN: khong gioi han so buoc cua ca chuong trinh nua - chi can
+        // vong dem con cho la nhan tiep, chay toi dau nap toi do
+        if (!nap_buoc_theo_dong(&buoc)) {
+            printf("Loi: vong dem day qua lau, khong nap duoc them buoc.\n");
             co_loi_khi_nap = true;
-            return;
         }
-        chuong_trinh[so_buoc_da_nap++] = buoc;
     } else {
-        if (xQueueSend(hang_doi_lenh_dong_co, &buoc, pdMS_TO_TICKS(100)) != pdTRUE) {
-            printf("Loi: hang doi lenh day, thu lai sau.\n");
-        }
-    }
-}
-
-// ================== NHIN TRUOC (look-ahead): NOI LIEN CAC DOAN CAT ==================
-// Chay 1 lan sau khi nap xong chuong trinh. Neu doan CAT i va doan ngay sau no
-// cung la doan CAT thi danh dau doan i la "noi_lien_sau": khi chay toi doan i,
-// dong co se KHONG giam toc ve 0 va KHONG in log, ma chay thang sang doan ke
-// tiep => duong cat lien mach, khong co vet dung o cac diem doi huong.
-// Doan CAT CUOI CUNG cua chuoi van giam toc binh thuong de khong mat buoc.
-static void tinh_noi_lien_chuong_trinh(void)
-{
-    for (int i = 0; i < so_buoc_da_nap; i++) {
-        chuong_trinh[i].noi_lien_sau = false;
-    }
-    for (int i = 0; i + 1 < so_buoc_da_nap; i++) {
-        if (chuong_trinh[i].loai == LENH_DI_CHUYEN && chuong_trinh[i].dang_cat &&
-            chuong_trinh[i + 1].loai == LENH_DI_CHUYEN && chuong_trinh[i + 1].dang_cat) {
-            chuong_trinh[i].noi_lien_sau = true;
+        if (!vong_dem_them(&buoc)) {
+            printf("Loi: vong dem lenh day, thu lai sau.\n");
         }
     }
 }
@@ -1813,23 +1959,48 @@ static void xu_ly_lenh_tu_pc(char *dong)
     dong_upper[sizeof(dong_upper) - 1] = '\0';
     for (char *p = dong_upper; *p; p++) *p = toupper((unsigned char)*p);
 
-    // ----- Dang trong che do NAP CHUONG TRINH -----
+    // ----- Dang trong che do NAP CHUONG TRINH (nap dan / streaming) -----
     if (dang_nap_chuong_trinh) {
         if (strcmp(dong_upper, "PROG;END") == 0) {
             dang_nap_chuong_trinh = false;
             if (co_loi_khi_nap) {
+                vong_dem_xoa_sach();
+                dang_chay_chuong_trinh = false;
                 printf("LOI_NAP: chuong trinh co dong bi loi, xem cac dong 'Loi:' o tren. Da huy nap.\n");
-                so_buoc_da_nap = 0;
             } else {
-                tinh_noi_lien_chuong_trinh();  // noi lien cac doan cat lien tiep
-                printf("OK_NAP: da nhan %d buoc, san sang RUN.\n", so_buoc_da_nap);
+                xa_buoc_dang_giu();     // day not buoc cuoi con giu de nhin truoc
+                het_chuong_trinh = true;
+                printf("OK_NAP;%d;%d: da nhan het %d dong / %d buoc.\n",
+                       so_dong_da_nap, so_buoc_da_nap, so_dong_da_nap, so_buoc_da_nap);
             }
             return;
         }
-        if (!xu_ly_1_dong_gcode(dong, true)) {
-            co_loi_khi_nap = true;
+        // Cac lenh dieu khien VAN nhan duoc trong luc dang nap dan - vi may
+        // tinh gui RUN ngay khi da co du BUOC_DAY_TRUOC_KHI_CHAY buoc dau tien
+        // roi moi nap tiep phan con lai.
+        if (strcmp(dong_upper, "RUN") == 0) {
+            bat_dau_chay_chuong_trinh("lenh RUN tu may tinh (nap dan)");
+            return;
         }
-        return;
+        if (strcmp(dong_upper, "PAUSE") == 0 || strcmp(dong_upper, "STOP") == 0 ||
+            strcmp(dong_upper, "RESUME") == 0 || strcmp(dong_upper, "POS") == 0 ||
+            strcmp(dong_upper, "BUF") == 0) {
+            // roi xuong duoi xu ly nhu lenh dieu khien binh thuong
+        } else {
+            bool ok = xu_ly_1_dong_gcode(dong, true);
+            if (!ok) co_loi_khi_nap = true;
+            so_dong_da_nap++;
+            // BAO NHAN kem so cho con trong: may tinh dua vao con so nay de
+            // biet duoc phep gui tiep bao nhieu dong ma khong lam tran bo dem.
+            // Thua cho thi bao thua nhip cho do ton bang thong (xem NHIP_BAO_NHAN).
+            int cho = vong_dem_cho_trong();
+            dong_tu_lan_bao++;
+            if (!ok || cho < NGUONG_BAO_TUNG_DONG || dong_tu_lan_bao >= NHIP_BAO_NHAN) {
+                dong_tu_lan_bao = 0;
+                printf("OK;%d;%d\n", cho, so_dong_da_nap);
+            }
+            return;
+        }
     }
 
     // ----- CFG: cai dat nang cao (chan GPIO, so xung/vong, dao chieu...) -----
@@ -2052,9 +2223,14 @@ static void xu_ly_lenh_tu_pc(char *dong)
 
     // ----- Lenh dieu khien (khong o trong che do nap) -----
     if (strcmp(dong_upper, "PROG;BEGIN") == 0) {
+        if (dang_chay_chuong_trinh) {
+            printf("Loi: dang chay chuong trinh, gui STOP truoc khi nap bai moi.\n");
+            return;
+        }
         dang_nap_chuong_trinh = true;
         co_loi_khi_nap = false;
-        so_buoc_da_nap = 0;
+        dong_tu_lan_bao = 0;
+        vong_dem_xoa_sach();
         che_do_tuyet_doi = true;
         feed_dang_nap = -1;
         plasma_mo_phong = false;             // dau chuong trinh coi nhu mo cat dang tat
@@ -2062,7 +2238,15 @@ static void xu_ly_lenh_tu_pc(char *dong)
         he_so_don_vi = 1.0;                  // mac dinh mm (G21) cho toi khi gap G20
         vi_tri_mo_phong_x = doc_vi_tri_keo_mm();   // mo phong tu VI TRI THUC hien tai
         vi_tri_mo_phong_y = doc_vi_tri_xoay_do();
-        printf("OK: san sang nhan G-code, gui PROG;END khi xong.\n");
+        // Bao ngay suc chua de may tinh biet duoc phep gui truoc bao nhieu dong
+        printf("OK_BEGIN;%d;%d\n", vong_dem_cho_trong(), BUOC_DAY_TRUOC_KHI_CHAY);
+        return;
+    }
+
+    // ----- BUF: hoi con bao nhieu cho trong / con bao nhieu buoc chua chay -----
+    if (strcmp(dong_upper, "BUF") == 0) {
+        dong_tu_lan_bao = 0;
+        printf("BUF;%d;%d;%d\n", vong_dem_cho_trong(), so_dong_da_nap, vong_dem_dang_co());
         return;
     }
 
@@ -2102,8 +2286,8 @@ static void xu_ly_lenh_tu_pc(char *dong)
         lenh_dong_co_t buoc;
         if (tao_buoc_di_chuyen(delta_x, delta_a, rpm, &buoc)) {
             trang_thai_chay = CHAY_BINH_THUONG;  // JOG luon chay duoc
-            if (xQueueSend(hang_doi_lenh_dong_co, &buoc, pdMS_TO_TICKS(100)) != pdTRUE) {
-                printf("Loi: hang doi day, khong the JOG.\n");
+            if (!vong_dem_them(&buoc)) {
+                printf("Loi: vong dem day, khong the JOG.\n");
             }
         } else {
             printf("Loi: khoang cach JOG qua nho.\n");
@@ -2155,10 +2339,10 @@ static void xu_ly_lenh_tu_pc(char *dong)
 
     if (strcmp(dong_upper, "STOP") == 0) {
         trang_thai_chay = YEU_CAU_DUNG_HAN;
-        gpio_set_level(g_cfg.pin_relay_plasma, 0);  // AN TOAN: tat mo cat ngay lap tuc
-        xQueueReset(hang_doi_lenh_dong_co);
-        so_buoc_da_nap = 0;
-        so_buoc_con_lai = 0;
+        dat_plasma(0);  // AN TOAN: tat mo cat ngay lap tuc
+        vong_dem_xoa_sach();
+        dang_nap_chuong_trinh = false;   // huy luon phien nap dan neu dang nap
+        co_loi_khi_nap = false;
         dang_chay_chuong_trinh = false;  // STOP da bao roi, khong bao XONG nua
         printf("STOPPED: da tat mo cat, dung han va xoa toan bo chuong trinh.\n");
         return;
@@ -2244,8 +2428,6 @@ void app_main(void)
     plasma_mo_phong = false;
     g_di_chuyen_modal = -1;
     he_so_don_vi = 1.0;
-
-    hang_doi_lenh_dong_co = xQueueCreate(MAX_BUOC_CHUONG_TRINH, sizeof(lenh_dong_co_t));
 
     dat_muc(g_cfg.pin_den_san_sang, 1);
 

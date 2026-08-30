@@ -312,9 +312,50 @@ firmware** - cau hinh duoc luu trong NVS (flash noi bo), khong mat khi mat dien.
 Doi chan GPIO thi phai bam *Luu vao flash* roi *Khoi dong lai ESP32* moi co
 hieu luc; doi hieu chuan va dao chieu thi co hieu luc ngay.
 
-## 12. Gioi han hien tai
+## 12. Nap dan (streaming) - chay file dai bao nhieu cung duoc
 
-- Chuong trinh toi da **300 buoc** (`MAX_BUOC_CHUONG_TRINH` trong `main.c`).
-  Phan mem van hanh se canh bao truoc neu file vuot qua gioi han nay
+Truoc day ca chuong trinh phai nap HET vao RAM ESP32 roi moi bam chay duoc,
+nen do dai file bi chan cung o 300 buoc va nguoi dung phai ngoi cho nap xong.
+
+Bay gio may tinh **nap dan**:
+
+1. Gui `PROG;BEGIN` - ESP32 tra `OK_BEGIN;<cho_trong>;<so_buoc_nap_truoc>`
+2. Gui 150 dong dau (`BUOC_DAY_TRUOC_KHI_CHAY`)
+3. Gui `RUN` - **may bat dau chay ngay**, khong cho nap het
+4. Vua chay vua nap tiep cho toi het bai
+5. Gui `PROG;END` - ESP32 tra `OK_NAP;<so_dong>;<so_buoc>`
+
+**Dieu tiet luu luong.** ESP32 bao nhan bang `OK;<cho_trong>;<so_dong_da_nhan>`,
+trong do `cho_trong` la so o con trong trong vong dem. May tinh chi gui tiep khi
+con cho, nho vay vong dem **khong bao gio tran** (mat lenh). Khi may tinh phai
+ngoi doi thi no chu dong hoi bang lenh `BUF` - neu khong hoi thi ca hai ben cung
+ngoi cho nhau va ket cung.
+
+Bao nhan di theo **lo 8 dong** (`NHIP_BAO_NHAN`) khi vong dem con rong rai, va
+theo **tung dong** khi vong dem sap day. Ly do: bao nhan tung dong ton them
+~14 byte moi dong tren duong COM; voi file CAM chia rat nho (0.1 mm/doan) chay
+3000 mm/phut thi rieng phan bao nhan da an het bang thong va lam may tinh nap
+khong kip.
+
+**Chong can bo dem.** Neu may tinh nap khong kip, may se dung yen giua duong cat
+trong khi mo plasma van bat -> **thung phoi**. Firmware xu ly:
+
+- Mo cat DANG BAT ma het buoc de chay -> **tat mo ngay lap tuc**, tam dung, bao
+  `LOI_CAN_BO_DEM`. Khong cho mot mili giay nao
+- Chua cat -> cho toi da `THOI_GIAN_CHO_NAP_MS` (1 giay) roi moi tam dung
+
+Do thuc te (gia lap dung baud, tinh ca luu luong 2 chieu):
+
+| Bai | Baud | Tu bam CHAY den luc dong co chay | Can bo dem |
+|---|---|---|---|
+| 607 dong, doan vai mm, 800 mm/phut | 115200 | ~0,6 s | 0 lan |
+| 1207 dong, doan 0,1 mm, 3000 mm/phut | 115200 | ~0,6 s | 0 lan |
+| 1207 dong, doan 0,1 mm, 3000 mm/phut | 921600 | ~0,35 s | 0 lan |
+
+## 13. Gioi han hien tai
+
+- Vong dem giu **1200 buoc** (`SUC_CHUA_BUOC`, 67 KB RAM). Day chi la **do sau
+  bo dem**, khong con la gioi han do dai chuong trinh - file dai bao nhieu cung
+  chay duoc
 - `G2/G3` chua noi suy cung tron that su, dang duoc xap xi thanh duong thang
   toi diem cuoi (phan mem se in canh bao khi gap)
