@@ -259,6 +259,48 @@ GND, khong can nguon ngoai.
 ESP32 devkit chi con dung 6 chan "sach" (co keo len, khong phai chan strapping)
 la 17, 18, 21, 22, 23, 27 - vua du 6 nut. Nut thu 7 (NHICH) va cong tac hanh
 trinh X+ phai dung GPIO34 va GPIO35 kem dien tro keo len ben ngoai.
+
+### Neu doi sang ESP32-S3-WROOM-1 N16R8
+
+Board nay thoai mai chan hon nhieu, du cho ca 4 den bao va **khong can dien tro
+keo len ben ngoai**. Bam nut **"ESP32-S3 N16R8"** o thanh tren cung cua phan mem
+cai dat de dien san so do chan goi y (chi dien vao o, xem lai roi tu bam gui).
+
+> **CANH BAO quan trong cho ban N16R8:** chu `R8` nghia la co 8MB PSRAM kieu
+> **Octal**, va PSRAM nay chiem **GPIO33 den GPIO37**. Board VAN dua GPIO35, 36,
+> 37 ra header (tren so do in la `SPIID`, `SPIICLK`, `SPIDQS` - chinh la tin
+> hieu PSRAM) nhung dung chung se lam **treo may hoac hong PSRAM**. Tuyet doi
+> khong dau day vao 3 chan do.
+
+Cac chan KHONG duoc dung tren board nay:
+
+| Chan | Ly do |
+|---|---|
+| 33 - 37 | PSRAM Octal cua ban R8 (33/34 khong dua ra chan) |
+| 26 - 32 | SPI flash (khong dua ra chan) |
+| 19, 20 | USB gan trong (cong Type-C native) |
+| 43, 44 | UART0 - cong nap chuong trinh va xem log |
+| 0, 3, 45, 46 | Chan strapping - keo sai muc luc khoi dong la khong boot |
+| 48 | Den RGB gan san tren board |
+
+So do chan goi y cho ESP32-S3 N16R8:
+
+```
+PUL_KEO_A = 4     DIR_KEO_A = 5
+PUL_KEO_B = 6     DIR_KEO_B = 7
+PUL_XOAY  = 15    DIR_XOAY  = 16
+RELAY_PLASMA = 17
+EMG = 18          LIMIT_X_AM = 8    LIMIT_X_DUONG = 9
+NUT_X_TIEN = 10   NUT_X_LUI    = 11
+NUT_A_THUAN= 12   NUT_A_NGHICH = 13
+NUT_START  = 14   NUT_STOP     = 21   NUT_NHICH = 1
+DEN_SAN_SANG = 2  DEN_DANG_CHAY = 42  DEN_XONG = 41  DEN_LOI = 40
+```
+
+Van con trong: GPIO39, 47 va nhom JTAG neu khong dung (40, 41, 42 dang lam den
+bao, co the doi cho khac neu can go loi bang JTAG).
+
+Nho doi target khi build: `idf.py set-target esp32s3`
 Khi doi sang **ESP32-S3** (45 chan thay vi 34) se thoai mai hon: bat lai 4 den
 bao bang `CFG;PIN;DEN_LOI;<so>`... va dua nut NHICH ve chan co keo len.
 

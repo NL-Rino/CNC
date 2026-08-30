@@ -89,6 +89,41 @@ ANH_XA_TIN_HIEU = {
 # Ky tu go vao o nhap de BO / TAT mot chan
 KY_TU_TAT_CHAN = "*"
 
+# ============================================================================
+# SO DO CHAN GOI Y SAN CHO TUNG LOAI BOARD
+# ============================================================================
+# ESP32 devkit goc (30/38 chan): chi con 6 chan "sach" nen 4 den bao phai TAT,
+# nut NHICH va cong tac hanh trinh X+ phai dung GPIO34/35 kem dien tro 10k ngoai.
+SO_DO_ESP32_GOC = {
+    "PUL_KEO_A": "4",  "DIR_KEO_A": "13",
+    "PUL_KEO_B": "14", "DIR_KEO_B": "16",
+    "PUL_XOAY": "25",  "DIR_XOAY": "26",
+    "RELAY_PLASMA": "19",
+    "PLC_IN_EMG": "32", "LIMIT_X_AM": "33", "LIMIT_X_DUONG": "35",
+    "NUT_X_TIEN": "23", "NUT_X_LUI": "27",
+    "NUT_A_THUAN": "17", "NUT_A_NGHICH": "18",
+    "NUT_START": "21", "NUT_STOP": "22", "NUT_NHICH": "34",
+    "DEN_SAN_SANG": "*", "DEN_DANG_CHAY": "*", "DEN_XONG": "*", "DEN_LOI": "*",
+}
+
+# ESP32-S3-WROOM-1 N16R8 (loai co 2 cong USB Type-C).
+# TRANH: 33-37 (PSRAM Octal cua ban R8 - dung la treo may), 19/20 (USB),
+#        43/44 (UART0 nap chuong trinh), 0/3/45/46 (chan strapping),
+#        48 (den RGB tren board), 26-32 (flash, khong dua ra chan).
+# Con lai du chan cho ca 4 den bao. Cac chan nay deu co dien tro keo len ben
+# trong nen KHONG can lap dien tro ngoai nhu ban ESP32 goc.
+SO_DO_ESP32_S3 = {
+    "PUL_KEO_A": "4",  "DIR_KEO_A": "5",
+    "PUL_KEO_B": "6",  "DIR_KEO_B": "7",
+    "PUL_XOAY": "15",  "DIR_XOAY": "16",
+    "RELAY_PLASMA": "17",
+    "PLC_IN_EMG": "18", "LIMIT_X_AM": "8", "LIMIT_X_DUONG": "9",
+    "NUT_X_TIEN": "10", "NUT_X_LUI": "11",
+    "NUT_A_THUAN": "12", "NUT_A_NGHICH": "13",
+    "NUT_START": "14", "NUT_STOP": "21", "NUT_NHICH": "1",
+    "DEN_SAN_SANG": "2", "DEN_DANG_CHAY": "42", "DEN_XONG": "41", "DEN_LOI": "40",
+}
+
 # Anh xa ten khoa trong dong "CFG: ..." tu ESP32 -> ten chan trong GUI
 ANH_XA_CHAN = {
     "pul_keo_a": "PUL_KEO_A", "dir_keo_a": "DIR_KEO_A",
@@ -180,6 +215,14 @@ class SettingsApp:
 
         ttk.Button(khung, text="Doc cau hinh (CFG;GET)",
                    command=lambda: self._gui_qua_serial("CFG;GET")).grid(row=0, column=5, padx=5, pady=5)
+
+        ttk.Label(khung, text="   Dien san so do chan:").grid(row=0, column=6, padx=(14, 2), pady=5)
+        ttk.Button(khung, text="ESP32 goc", width=11,
+                   command=lambda: self._dien_so_do("ESP32 devkit goc", SO_DO_ESP32_GOC)
+                   ).grid(row=0, column=7, padx=3, pady=5)
+        ttk.Button(khung, text="ESP32-S3 N16R8", width=15,
+                   command=lambda: self._dien_so_do("ESP32-S3-WROOM-1 N16R8", SO_DO_ESP32_S3)
+                   ).grid(row=0, column=8, padx=3, pady=5)
 
     # ----- Tab: CHE DO LAM VIEC -----
     def _dung_tab_che_do(self):
@@ -589,14 +632,15 @@ class SettingsApp:
             so = int(chuoi)
         except ValueError:
             return None
-        return so if 0 <= so <= 39 else None
+        # ESP32 goc: GPIO0-39. ESP32-S3: toi GPIO48
+        return so if 0 <= so <= 48 else None
 
     def _gui_1_chan(self, ten):
         so = self._doi_o_nhap_sang_so_chan(self.entry_chan[ten].get())
         if so is None:
             messagebox.showwarning(
                 "Sai du lieu",
-                f"Chan {ten} phai la so 0-39, hoac go '{KY_TU_TAT_CHAN}' de BO chan nay.")
+                f"Chan {ten} phai la so 0-48, hoac go '{KY_TU_TAT_CHAN}' de BO chan nay.")
             return
         self._gui_qua_serial(f"CFG;PIN;{ten};{so}")
 
@@ -606,6 +650,28 @@ class SettingsApp:
             if so is not None:
                 self._gui_qua_serial(f"CFG;PIN;{ten};{so}")
                 time.sleep(0.03)
+
+    def _dien_so_do(self, ten_board, so_do):
+        """Dien san so do chan goi y vao cac o nhap (CHUA gui xuong ESP32).
+
+        Nguoi dung xem lai roi tu bam "Gui tat ca chan trong tab nay" o tung tab.
+        Lam vay an toan hon la gui thang, vi doi nham chan dieu khien dong co
+        khi may dang cam dien co the lam dong co chay bat ngo.
+        """
+        if not messagebox.askyesno(
+                "Dien san so do chan",
+                f"Dien so do chan goi y cho {ten_board} vao cac o nhap?\n\n"
+                "Chi DIEN VAO O, CHUA gui xuong ESP32. Xem lai xong hay bam "
+                "'Gui tat ca chan trong tab nay' o tung tab, roi Luu vao flash "
+                "va Khoi dong lai."):
+            return
+        for ten, gia_tri in so_do.items():
+            o = self.entry_chan.get(ten)
+            if o is not None:
+                o.delete(0, "end")
+                o.insert(0, gia_tri)
+        self._ghi_log(f"[He thong] Da dien so do chan goi y cho {ten_board}. "
+                      f"Xem lai roi bam 'Gui tat ca chan' o tung tab.")
 
     def _gui_tin_hieu(self, ten):
         """Gui kieu tin hieu cua 1 ngo vao (bat = kich bang GND)."""

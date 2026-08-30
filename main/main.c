@@ -1874,8 +1874,10 @@ static void xu_ly_lenh_tu_pc(char *dong)
                 printf("Loi: cu phap CFG;PIN sai. Vi du: CFG;PIN;PUL_KEO_A;4\n");
                 return;
             }
-            if (so_gpio != -1 && (so_gpio < 0 || so_gpio > 39)) {
-                printf("Loi: so GPIO phai trong khoang 0-39, hoac -1 de TAT.\n");
+            // ESP32 goc co GPIO0-39, ESP32-S3 co toi GPIO48 nen phai cho toi 48.
+            // Chan khong ton tai tren chip dang dung se bi gpio_config() tu choi.
+            if (so_gpio != -1 && (so_gpio < 0 || so_gpio > 48)) {
+                printf("Loi: so GPIO phai trong khoang 0-48, hoac -1 de TAT.\n");
                 return;
             }
             int *dich = NULL;
