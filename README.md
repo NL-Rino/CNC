@@ -210,6 +210,31 @@ NUT_NHICH  = GPIO34  <-- CAN DIEN TRO 10k LEN 3V3 BEN NGOAI
 Den bao SAN_SANG/DANG_CHAY/XONG/LOI: MAC DINH TAT (-1) vi het chan
 ```
 
+### Bo chan va doi kieu tin hieu
+
+Trong phan mem cai dat:
+
+- **Go `*` vao o so chan** de BO chan do (khong lap thiet bi nay). Chan bi bo se
+  duoc hien thi lai bang dau `*`. Firmware bo qua han chan do, khong cau hinh
+  GPIO va khong doc/ghi gi len no.
+- **O gat "GND"** ben canh moi ngo VAO doi kieu tin hieu:
+
+| O gat | Y nghia | Dung cho |
+|---|---|---|
+| **BAT** | Cap GND vao chan = kich hoat | Nut bam **thuong ho (NO)** |
+| **TAT** | Mat GND moi la kich hoat | Tiep diem **thuong dong (NC)** |
+
+Tat ca chan vao deu bat dien tro keo len ben trong, nen chi can dau nut xuong
+GND, khong can nguon ngoai.
+
+> **KHUYEN NGHI AN TOAN cho EMG va LIMIT: dung tiep diem THUONG DONG va TAT o
+> gat GND.** Khi do binh thuong mach kin (co GND), bam nut khan cap hoac
+> **DUT DAY** deu lam mat GND va may tu dung. Neu de kieu thuong ho, day tin
+> hieu bi dut thi nut khan cap se KHONG con tac dung ma khong ai biet.
+>
+> Mac dinh firmware dat TAT CA ngo vao la "kich bang GND" (thuong ho) de giu
+> nguyen hanh vi cu - hay tu doi EMG/LIMIT sang thuong dong sau khi dau day.
+
 > **GPIO34 khong co dien tro keo len ben trong.** Phai lap 1 dien tro 10k tu
 > GPIO34 len 3V3, neu khong nut NHICH se bao "dang bam" lung tung.
 

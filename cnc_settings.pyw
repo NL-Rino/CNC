@@ -71,6 +71,21 @@ NHOM_DEN = [
     ("DEN_LOI",       "Den LOI"),
 ]
 
+# Cac ngo VAO co the doi kieu tin hieu (ten dung trong lenh CFG;TINHIEU)
+CAC_NGO_VAO = {"PLC_IN_EMG", "PLC_IN_LIMIT", "NUT_X_TIEN", "NUT_X_LUI",
+               "NUT_A_THUAN", "NUT_A_NGHICH", "NUT_START", "NUT_STOP", "NUT_NHICH"}
+
+# Ten khoa kieu tin hieu trong dong "CFG: th_..." -> ten chan
+ANH_XA_TIN_HIEU = {
+    "th_emg": "PLC_IN_EMG", "th_limit": "PLC_IN_LIMIT",
+    "th_x_tien": "NUT_X_TIEN", "th_x_lui": "NUT_X_LUI",
+    "th_a_thuan": "NUT_A_THUAN", "th_a_nghich": "NUT_A_NGHICH",
+    "th_start": "NUT_START", "th_stop": "NUT_STOP", "th_nhich": "NUT_NHICH",
+}
+
+# Ky tu go vao o nhap de BO / TAT mot chan
+KY_TU_TAT_CHAN = "*"
+
 # Anh xa ten khoa trong dong "CFG: ..." tu ESP32 -> ten chan trong GUI
 ANH_XA_CHAN = {
     "pul_keo_a": "PUL_KEO_A", "dir_keo_a": "DIR_KEO_A",
@@ -90,14 +105,15 @@ class SettingsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Cai dat nang cao - May Cat Ong (CHAN GPIO / HIEU CHUAN)")
-        self.root.geometry("990x730")
-        self.root.minsize(975, 640)
+        self.root.geometry("1140x730")
+        self.root.minsize(1130, 640)
 
         self.ser = None
         self.dang_ket_noi = False
         self.dang_doc = False
         self.entry_chan = {}
         self.bien_dao = {}
+        self.bien_tin_hieu = {}   # cong tac gat kieu tin hieu tung ngo vao
         # Luong nen doc serial KHONG duoc dung cham vao giao dien Tkinter - no chi
         # bo dong doc duoc vao hang doi nay, luong giao dien tu lay ra
         self.hang_doi_su_kien = queue.Queue()
@@ -115,8 +131,17 @@ class SettingsApp:
             self.root,
             text="⚠ Chi doi cau hinh khi may DUNG HAN. Doi sai chan GPIO co the lam mat "
                  "tin hieu EMG/LIMIT hoac dieu khien nham dong co.",
-            font=("Segoe UI", 8, "bold"), fg="#d9534f", justify="left", wraplength=970
+            font=("Segoe UI", 8, "bold"), fg="#d9534f", justify="left", wraplength=1120
         ).pack(fill="x", padx=8, pady=(6, 2))
+
+        tk.Label(
+            self.root,
+            text="Go  *  vao o so chan de BO chan do.   "
+                 "O 'GND' ben canh ngo vao: BAT = cap GND thi kich (nut thuong ho), "
+                 "TAT = mat GND moi kich (tiep diem thuong dong - nen dung cho EMG/LIMIT "
+                 "vi dut day cung tu bao ve).",
+            font=("Segoe UI", 8), fg="#0b5cad", justify="left", wraplength=1120
+        ).pack(fill="x", padx=8, pady=(0, 2))
 
         self._dung_khung_ket_noi(pad)
 
@@ -388,7 +413,9 @@ class SettingsApp:
 
         cot=0 dat o nua trai, cot=1 dat o nua phai (de xep 2 cot cho gon).
         """
-        c = cot * 4
+        # Moi khoi chiem 5 cot: mo ta | ten chan | o nhap | nut Gui | o gat GND
+        # (truoc day nhan 4 nen o gat cua cot trai de len cot phai)
+        c = cot * 5
         ttk.Label(parent, text=mo_ta, width=27, anchor="w").grid(
             row=hang, column=c, padx=(6, 2), pady=2, sticky="w")
         ttk.Label(parent, text=ten, width=14, font=("Consolas", 8),
@@ -399,7 +426,15 @@ class SettingsApp:
         self.entry_chan[ten] = entry
         ttk.Button(parent, text="Gui", width=5,
                    command=lambda t=ten: self._gui_1_chan(t)).grid(
-            row=hang, column=c + 3, padx=(2, 8), pady=2)
+            row=hang, column=c + 3, padx=2, pady=2)
+
+        # Chi ngo VAO moi co cong tac gat doi kieu tin hieu
+        if ten in CAC_NGO_VAO:
+            bien = tk.BooleanVar(value=True)
+            self.bien_tin_hieu[ten] = bien
+            o = ttk.Checkbutton(parent, text="GND", variable=bien, width=6,
+                                command=lambda t=ten: self._gui_tin_hieu(t))
+            o.grid(row=hang, column=c + 4, padx=(4, 8), pady=2, sticky="w")
 
     def _them_nhom_2_cot(self, parent, danh_sach):
         """Xep danh sach chan thanh 2 cot cho do cao cua so."""
@@ -488,7 +523,12 @@ class SettingsApp:
             entry = self.entry_chan.get(ANH_XA_CHAN[ten])
             if entry is not None:
                 entry.delete(0, "end")
-                entry.insert(0, gia_tri)
+                # Chan bi tat hien thi bang '*' cho de nhin
+                entry.insert(0, KY_TU_TAT_CHAN if gia_tri.strip() == "-1" else gia_tri)
+        elif ten in ANH_XA_TIN_HIEU:
+            bien = self.bien_tin_hieu.get(ANH_XA_TIN_HIEU[ten])
+            if bien is not None:
+                bien.set(gia_tri.strip() == "1")
         elif ten == "microstep_moi_vong":
             self.entry_microstep.delete(0, "end")
             self.entry_microstep.insert(0, gia_tri)
@@ -532,29 +572,41 @@ class SettingsApp:
             return False
 
     @staticmethod
-    def _la_so_chan(chuoi):
-        """Chan hop le: 0..39, hoac -1 de TAT (khong lap thiet bi do)."""
+    def _doi_o_nhap_sang_so_chan(chuoi):
+        """Doi noi dung o nhap sang so chan gui xuong ESP32.
+
+        Chap nhan: "*" hoac de trong = BO CHAN (gui -1), hoac so 0..39.
+        Tra ve None neu khong hop le.
+        """
+        chuoi = chuoi.strip()
+        if chuoi in (KY_TU_TAT_CHAN, "", "-1"):
+            return -1
         try:
             so = int(chuoi)
         except ValueError:
-            return False
-        return so == -1 or 0 <= so <= 39
+            return None
+        return so if 0 <= so <= 39 else None
 
     def _gui_1_chan(self, ten):
-        gia_tri = self.entry_chan[ten].get().strip()
-        if not self._la_so_chan(gia_tri):
-            messagebox.showwarning("Sai du lieu",
-                                   f"So GPIO cho {ten} phai trong khoang 0-39, "
-                                   f"hoac -1 de TAT.")
+        so = self._doi_o_nhap_sang_so_chan(self.entry_chan[ten].get())
+        if so is None:
+            messagebox.showwarning(
+                "Sai du lieu",
+                f"Chan {ten} phai la so 0-39, hoac go '{KY_TU_TAT_CHAN}' de BO chan nay.")
             return
-        self._gui_qua_serial(f"CFG;PIN;{ten};{gia_tri}")
+        self._gui_qua_serial(f"CFG;PIN;{ten};{so}")
 
     def _gui_nhom_chan(self, nhom):
         for ten, _ in nhom:
-            gia_tri = self.entry_chan[ten].get().strip()
-            if self._la_so_chan(gia_tri):
-                self._gui_qua_serial(f"CFG;PIN;{ten};{gia_tri}")
+            so = self._doi_o_nhap_sang_so_chan(self.entry_chan[ten].get())
+            if so is not None:
+                self._gui_qua_serial(f"CFG;PIN;{ten};{so}")
                 time.sleep(0.03)
+
+    def _gui_tin_hieu(self, ten):
+        """Gui kieu tin hieu cua 1 ngo vao (bat = kich bang GND)."""
+        bat = self.bien_tin_hieu[ten].get()
+        self._gui_qua_serial(f"CFG;TINHIEU;{ten};{1 if bat else 0}")
 
     def _gui_microstep(self):
         try:
