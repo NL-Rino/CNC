@@ -131,7 +131,8 @@ class KetQuaPhanTich:
 
 def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
                            toc_do_cat=TOC_DO_CAT_MAC_DINH,
-                           toc_do_nhanh=TOC_DO_NHANH_MAC_DINH):
+                           toc_do_nhanh=TOC_DO_NHANH_MAC_DINH,
+                           che_do=1, duong_kinh=60.0):
     """Doc truoc toan bo chuong trinh G-code.
 
     Tra ve KetQuaPhanTich gom: cac doan duong di (de ve hinh), diem moi,
@@ -145,6 +146,11 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
       - Luon ghi F vao moi dong di chuyen -> khong bao gio bi loi "chua khai bao F"
     """
     kq = KetQuaPhanTich()
+
+    # CHE DO 3: toa do truc A trong file la MM CUNG tren mat ong. Doi sang DO de
+    # ca hinh xem truoc lan mo phong 3D deu ve dung.
+    chu_vi = math.pi * duong_kinh if duong_kinh > 0 else 0.0
+    doi_a_sang_do = (che_do == 3 and chu_vi > 0)
 
     x = 0.0
     a = 0.0
@@ -249,7 +255,8 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
             if "X" in tu_khac:
                 x = tu_khac["X"] * he_so_dai
             if "A" in tu_khac or "Y" in tu_khac:
-                a = tu_khac.get("A", tu_khac.get("Y"))
+                gia_tri_a = tu_khac.get("A", tu_khac.get("Y"))
+                a = gia_tri_a / chu_vi * 360.0 if doi_a_sang_do else gia_tri_a
         elif ve_goc:
             x_moi, a_moi = 0.0, 0.0
             co_di_chuyen = (abs(x_moi - x) > 1e-9) or (abs(a_moi - a) > 1e-9)
@@ -259,8 +266,11 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
                 gia_tri = tu_khac["X"] * he_so_dai
                 x_moi = gia_tri if tuyet_doi else x + gia_tri
             if "A" in tu_khac or "Y" in tu_khac:
-                # A la GOC (do) - khong nhan he so inch
+                # A la GOC (do) - khong nhan he so inch.
+                # Che do 3: gia tri trong file la mm cung -> doi sang do
                 gia_tri = tu_khac.get("A", tu_khac.get("Y"))
+                if doi_a_sang_do:
+                    gia_tri = gia_tri / chu_vi * 360.0
                 a_moi = gia_tri if tuyet_doi else a + gia_tri
             co_di_chuyen = (abs(x_moi - x) > 1e-9) or (abs(a_moi - a) > 1e-9)
             la_cat = plasma and ma_dc != 0
@@ -302,7 +312,8 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
             if "X" in tu_khac:
                 phan += f" X{_so_gon(x)}"
             if "A" in tu_khac or "Y" in tu_khac:
-                phan += f" A{_so_gon(a)}"
+                # Gui xuong theo DUNG don vi trong file goc - firmware tu doi
+                phan += f" A{_so_gon(tu_khac.get('A', tu_khac.get('Y')))}"
             ra.append(phan)
 
         if 4 in ma_g:
@@ -323,7 +334,10 @@ def phan_tich_chuong_trinh(cac_dong, chuan_hoa=True, ghi_de_toc_do=False,
                 if not tuyet_doi:
                     ra.append("G91")
             else:
-                phan = f"G{ma_dc} X{_so_gon(x)} A{_so_gon(a)} F{_so_gon(f_dung)}"
+                # Toa do A gui xuong phai theo DUNG don vi ma firmware dang cho
+                # doi (che do 3 = mm cung), nen doi nguoc lai neu da doi o tren
+                a_gui = a / 360.0 * chu_vi if doi_a_sang_do else a
+                phan = f"G{ma_dc} X{_so_gon(x)} A{_so_gon(a_gui)} F{_so_gon(f_dung)}"
                 ra.append(phan)
 
         for m in ma_m:
@@ -358,6 +372,8 @@ class GCodeApp:
         self.da_thay_doi = False
         self.ket_qua_phan_tich = None
         self.gcode_da_ve = None      # noi dung G-code cua lan ve hinh gan nhat
+        self.che_do_may = 1          # 1/2/3 - doc tu ESP32 bang CFG;GET
+        self.duong_kinh_may = 60.0   # mm - doc tu ESP32
         self.ket_qua_nap = None      # "OK" / "LOI" - dat khi ESP32 tra loi
         # Cac luong nen (doc serial, nap chuong trinh) KHONG duoc dung cham vao
         # giao dien Tkinter. Chung chi bo du lieu vao hang doi nay, con luong
@@ -821,29 +837,34 @@ class GCodeApp:
                            text="Do dam = duong cat mat truoc    Do nhat = vong ra mat sau ong")
 
     def _dung_khung_toc_do(self, pad):
-        khung = ttk.LabelFrame(self.root, text="Toc do (F - RPM dong co)")
+        khung = ttk.LabelFrame(self.root, text="Toc do (F - vong/phut dong co)  [Che do 1]")
         khung.pack(fill="x", **pad)
+        self.khung_toc_do = khung
 
         ttk.Label(khung, text="Toc do CAT:").grid(row=0, column=0, padx=(8, 2), pady=6, sticky="w")
         self.entry_toc_do_cat = ttk.Entry(khung, width=8)
         self.entry_toc_do_cat.insert(0, _so_gon(TOC_DO_CAT_MAC_DINH))
         self.entry_toc_do_cat.grid(row=0, column=1, padx=2, pady=6)
+        self.lbl_dv_cat = ttk.Label(khung, text="RPM", width=6, foreground="#666")
+        self.lbl_dv_cat.grid(row=0, column=2, padx=(2, 8), pady=6, sticky="w")
 
         ttk.Label(khung, text="Toc do CHAY KHONG TAI (G0):").grid(
-            row=0, column=2, padx=(16, 2), pady=6, sticky="w")
+            row=0, column=3, padx=(10, 2), pady=6, sticky="w")
         self.entry_toc_do_nhanh = ttk.Entry(khung, width=8)
         self.entry_toc_do_nhanh.insert(0, _so_gon(TOC_DO_NHANH_MAC_DINH))
-        self.entry_toc_do_nhanh.grid(row=0, column=3, padx=2, pady=6)
+        self.entry_toc_do_nhanh.grid(row=0, column=4, padx=2, pady=6)
+        self.lbl_dv_nhanh = ttk.Label(khung, text="RPM", width=6, foreground="#666")
+        self.lbl_dv_nhanh.grid(row=0, column=5, padx=(2, 8), pady=6, sticky="w")
 
         self.bien_ghi_de = tk.BooleanVar(value=True)
         ttk.Checkbutton(khung, text="Ghi de F trong file",
                         variable=self.bien_ghi_de,
-                        command=self._ve_lai_xem_truoc).grid(row=0, column=4, padx=(20, 6), pady=6)
+                        command=self._ve_lai_xem_truoc).grid(row=0, column=6, padx=(12, 6), pady=6)
 
         self.bien_chuan_hoa = tk.BooleanVar(value=True)
         ttk.Checkbutton(khung, text="Chuan hoa G-code (nen bat)",
                         variable=self.bien_chuan_hoa,
-                        command=self._doi_chuan_hoa).grid(row=0, column=5, padx=6, pady=6)
+                        command=self._doi_chuan_hoa).grid(row=0, column=7, padx=6, pady=6)
 
     def _doi_chuan_hoa(self):
         if not self.bien_chuan_hoa.get():
@@ -876,6 +897,13 @@ class GCodeApp:
     def _gcode_da_doi_tu_lan_ve(self):
         return self.text_gcode.get("1.0", "end") != self.gcode_da_ve
 
+    def _doc_duong_kinh(self):
+        try:
+            d = float(self.entry_duong_kinh.get())
+            return d if d > 0 else self.duong_kinh_may
+        except (ValueError, AttributeError):
+            return self.duong_kinh_may
+
     def _ve_lai_xem_truoc(self):
         cac_dong = self.text_gcode.get("1.0", "end").splitlines()
         self.gcode_da_ve = self.text_gcode.get("1.0", "end")
@@ -889,6 +917,8 @@ class GCodeApp:
             ghi_de_toc_do=self.bien_ghi_de.get(),
             toc_do_cat=toc_do[0],
             toc_do_nhanh=toc_do[1],
+            che_do=self.che_do_may,
+            duong_kinh=self._doc_duong_kinh(),
         )
         self._ve_hinh()
         self._ve_3d()
@@ -1113,7 +1143,8 @@ class GCodeApp:
 
             self.dang_doc = True
             threading.Thread(target=self._doc_serial_lien_tuc, daemon=True).start()
-            self.root.after(500, self._hoi_vi_tri_dinh_ky)
+            self.root.after(300, lambda: self._gui_qua_serial("CFG;GET", ghi_log=False))
+            self.root.after(800, self._hoi_vi_tri_dinh_ky)
         except Exception as loi:
             messagebox.showerror("Loi ket noi", f"Khong the ket noi toi {cong}:\n{loi}")
 
@@ -1179,8 +1210,42 @@ class GCodeApp:
         self._ghi_log(f"[ESP32] {dong}", the)
         self._thu_cap_nhat_vi_tri(dong)
         self._thu_cap_nhat_so_xung(dong)
+        self._thu_doc_che_do(dong)
         self._thu_cap_nhat_trang_thai_tu_log(dong)
         self._thu_to_mau_dong_loi(dong)
+
+    def _thu_doc_che_do(self, dong):
+        """Doc "CFG: che_do=2 duong_kinh_ong=60.0000" do lenh CFG;GET tra ve."""
+        if not dong.startswith("CFG:"):
+            return
+        for cap in dong[len("CFG:"):].strip().split():
+            if "=" not in cap:
+                continue
+            ten, gia_tri = cap.split("=", 1)
+            try:
+                if ten == "che_do":
+                    self.che_do_may = int(gia_tri)
+                    self._cap_nhat_nhan_toc_do()
+                elif ten == "duong_kinh_ong":
+                    self.duong_kinh_may = float(gia_tri)
+                    self.entry_duong_kinh.delete(0, "end")
+                    self.entry_duong_kinh.insert(0, _so_gon(self.duong_kinh_may))
+                    self._ve_lai_xem_truoc()
+            except ValueError:
+                pass
+
+    def _cap_nhat_nhan_toc_do(self):
+        """Doi nhan o toc do cho dung don vi cua che do dang dung."""
+        if self.che_do_may == 1:
+            nhan = "Toc do (F - vong/phut dong co)  [Che do 1]"
+            don_vi = "RPM"
+        else:
+            nhan = ("Toc do (F - mm/phut MO CAT LUOT TREN MAT ONG)  "
+                    f"[Che do {self.che_do_may}]")
+            don_vi = "mm/ph"
+        self.khung_toc_do.config(text=nhan)
+        self.lbl_dv_cat.config(text=don_vi)
+        self.lbl_dv_nhanh.config(text=don_vi)
 
     def _thu_cap_nhat_so_xung(self, dong):
         """Doc dong "XUNG: X=12345 A=678" do lenh POS tra ve."""

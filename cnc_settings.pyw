@@ -7,7 +7,8 @@ day la cai dat lien quan truc tiep PHAN CUNG / FIRMWARE - chi nguoi lap dat
 may hoac sua driver moi can dung, khong dung trong luc van hanh cat hang ngay.
 
 Bo cuc: chia THEO TAB cho de nhin va khong tran man hinh
-  Tab 1 "Truc & Driver" : chan PUL/DIR cua 3 dong co + relay plasma + dao chieu
+  Tab 1 "Che do"        : chon 1 trong 3 che do lam viec + duong kinh ong
+  Tab 2 "Truc & Driver" : chan PUL/DIR cua 3 dong co + relay plasma + dao chieu
   Tab 2 "Bang dieu khien tay" : EMG/LIMIT + 7 nut bam + den bao
   Tab 3 "Hieu chuan"    : so xung/vong, mm/vong truc keo
 
@@ -123,6 +124,7 @@ class SettingsApp:
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill="both", expand=True, **pad)
 
+        self._dung_tab_che_do()
         self._dung_tab_truc()
         self._dung_tab_plc()
         self._dung_tab_hieu_chuan()
@@ -149,6 +151,78 @@ class SettingsApp:
 
         ttk.Button(khung, text="Doc cau hinh (CFG;GET)",
                    command=lambda: self._gui_qua_serial("CFG;GET")).grid(row=0, column=5, padx=5, pady=5)
+
+    # ----- Tab: CHE DO LAM VIEC -----
+    def _dung_tab_che_do(self):
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="  Che do  ")
+
+        khung = ttk.LabelFrame(tab, text="Chon che do lam viec (ap dung ngay)")
+        khung.pack(fill="x", padx=8, pady=6)
+
+        self.bien_che_do = tk.IntVar(value=1)
+
+        cac_che_do = [
+            (1, "Che do 1 - MM va DO",
+             "Truc X nhap bang mm, truc A nhap bang do. F la toc do VONG/PHUT cua\n"
+             "dong co. Thoi gian di chuyen lay theo truc cham nhat.\n"
+             "KHONG can khai bao duong kinh ong. Day la che do goc."),
+            (2, "Che do 2 - MM va DO, giu deu toc do mo cat",
+             "Van nhap X bang mm va A bang do NHUNG phai khai bao duong kinh ong.\n"
+             "F la toc do MO CAT LUOT TREN MAT ONG, don vi mm/phut.\n"
+             "He thong quy doi goc xoay ra chieu dai cung that roi tinh thoi gian\n"
+             "theo quang duong that => 2 truc phoi hop dung ty le, mo cat luot voi\n"
+             "toc do khong doi du duong cat cheo bao nhieu."),
+            (3, "Che do 3 - FULL MM",
+             "Nhu che do 2 nhung truc A cung nhap bang MM (chieu dai cung tren mat\n"
+             "ong, kieu 'trai phang'), khong phai do. Hop voi file CAM xuat ra dang\n"
+             "trai phang. Cung can khai bao duong kinh ong."),
+        ]
+        for gia_tri, ten, mo_ta in cac_che_do:
+            ttk.Radiobutton(khung, text=ten, value=gia_tri, variable=self.bien_che_do,
+                            command=self._gui_che_do).pack(anchor="w", padx=8, pady=(6, 0))
+            ttk.Label(khung, text=mo_ta, foreground="#666", justify="left",
+                      font=("Segoe UI", 8)).pack(anchor="w", padx=30, pady=(0, 2))
+
+        khung_dk = ttk.LabelFrame(tab, text="Duong kinh ong (bat buoc cho che do 2 va 3)")
+        khung_dk.pack(fill="x", padx=8, pady=6)
+
+        ttk.Label(khung_dk, text="Duong kinh ngoai ong (mm):").grid(
+            row=0, column=0, padx=8, pady=8, sticky="w")
+        self.entry_duong_kinh = ttk.Entry(khung_dk, width=10)
+        self.entry_duong_kinh.insert(0, "60")
+        self.entry_duong_kinh.grid(row=0, column=1, padx=6, pady=8)
+        ttk.Button(khung_dk, text="Gui", width=8,
+                   command=self._gui_duong_kinh).grid(row=0, column=2, padx=6, pady=8)
+        self.lbl_chu_vi = ttk.Label(khung_dk, text="", foreground="#666")
+        self.lbl_chu_vi.grid(row=0, column=3, padx=12, pady=8, sticky="w")
+        self._cap_nhat_chu_vi()
+        self.entry_duong_kinh.bind("<KeyRelease>", lambda e: self._cap_nhat_chu_vi())
+
+    def _cap_nhat_chu_vi(self):
+        try:
+            d = float(self.entry_duong_kinh.get())
+            if d <= 0:
+                raise ValueError
+            import math
+            self.lbl_chu_vi.config(
+                text=f"chu vi = {math.pi * d:.2f} mm   (1 do = {math.pi * d / 360:.4f} mm cung)")
+        except ValueError:
+            self.lbl_chu_vi.config(text="")
+
+    def _gui_che_do(self):
+        self._gui_qua_serial(f"CFG;MODE;{self.bien_che_do.get()}")
+
+    def _gui_duong_kinh(self):
+        try:
+            gia_tri = float(self.entry_duong_kinh.get())
+            if gia_tri <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Sai du lieu", "Duong kinh ong phai la so > 0.")
+            return
+        self._gui_qua_serial(f"CFG;DUONGKINH;{gia_tri}")
+        self._cap_nhat_chu_vi()
 
     # ----- Tab 1: truc dong co -----
     def _dung_tab_truc(self):
@@ -426,6 +500,15 @@ class SettingsApp:
             self.bien_dao[ma].set(gia_tri == "1")
         elif ten == "ramp_khi_cat":
             self.bien_ramp_cat.set(gia_tri == "1")
+        elif ten == "che_do":
+            try:
+                self.bien_che_do.set(int(gia_tri))
+            except ValueError:
+                pass
+        elif ten == "duong_kinh_ong":
+            self.entry_duong_kinh.delete(0, "end")
+            self.entry_duong_kinh.insert(0, gia_tri)
+            self._cap_nhat_chu_vi()
         elif ten == "toc_do_tay_rpm":
             self.entry_toc_do_tay.delete(0, "end"); self.entry_toc_do_tay.insert(0, gia_tri)
         elif ten == "nhich_mm":

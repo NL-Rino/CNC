@@ -62,14 +62,48 @@ Copy 2 file nay di dau cung chay duoc.
    nhan nap thanh cong roi moi bat dau chay
 6. Trong luc chay co the bam **PAUSE** / **RESUME**, hoac **STOP** (phim Esc)
 
-## 4. Truc va don vi
+## 4. Truc, don vi va 3 CHE DO LAM VIEC
 
 Theo chuan ISO 841 cho may cat ong:
+- `X` = truc KEO ong doc theo chieu dai (`F` = toc do)
+- `A` = truc XOAY ong quanh truc X (`Y` la alias cua `A`)
 
-- `X` = truc KEO ong doc theo chieu dai, don vi **mm**
-  (hieu chuan mac dinh: 1 vong = 5mm, tuc 0.2 vong = 1mm)
-- `A` = truc XOAY ong quanh truc X, don vi **do** (`Y` la alias cua `A`)
-- `F` = toc do **RPM cua dong co**
+Chon che do trong tab **Che do** cua phan mem cai dat:
+
+| Che do | Truc X | Truc A | Y nghia cua F | Can duong kinh ong? |
+|---|---|---|---|---|
+| **1** | mm | **do** | vong/phut DONG CO | Khong |
+| **2** | mm | **do** | **mm/phut MO CAT tren mat ong** | Co |
+| **3** | mm | **mm cung** | **mm/phut MO CAT tren mat ong** | Co |
+
+**Che do 1** la che do goc: thoi gian di chuyen lay theo truc CHAM NHAT. Don
+gian, khong can biet ong, nhung toc do mo cat luot tren mat ong se THAY DOI tuy
+duong cat nghieng nhieu hay it.
+
+**Che do 2 va 3** giu **toc do mo cat luot tren mat ong KHONG DOI**. Cach lam:
+goc xoay duoc quy doi ra chieu dai CUNG that tren mat ong
+
+```
+cung (mm) = goc (do) / 360 x 3.1416 x duong_kinh
+```
+
+roi lay quang duong THAT tren mat ong (canh huyen)
+
+```
+quang_duong = can_bac_hai( X^2 + cung^2 )
+thoi_gian   = quang_duong / toc_do_mo_cat
+```
+
+Nho vay 2 truc luon phoi hop dung ty le va mo cat luot deu, du duong cat cheo
+bao nhieu. Da do kiem: voi ong D60 va F2000, ca 3 kieu doan - keo doc thuan,
+xoay tron thuan, va cat cheo - deu cho **cung mot toc do 2000 mm/phut**.
+
+**Che do 3** them mot buoc: toa do truc A trong file cung nhap bang **mm cung**
+(kieu "trai phang") thay vi do. Hop voi file CAM xuat ra dang trai phang.
+Firmware tu doi mm cung sang do theo duong kinh da khai bao.
+
+> Doi che do va duong kinh co hieu luc NGAY, khong can khoi dong lai ESP32.
+> Nho bam *Luu vao flash* de giu lai sau khi mat dien.
 
 ## 5. Tap lenh G-code ho tro
 

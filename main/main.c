@@ -189,6 +189,27 @@
 // Chu ky quet cac nut tren bang dieu khien tay (ms). Nut phai doc duoc giong
 // nhau 2 lan lien tiep moi duoc chap nhan, nen thoi gian loc doi = 2 x gia tri nay
 #define THOI_GIAN_QUET_NUT_MS 15
+
+// ================== 3 CHE DO LAM VIEC ==================
+// CHE_DO_RPM  (1): X = mm, A = do. F = toc do VONG/PHUT cua dong co.
+//                  Thoi gian di chuyen lay theo truc CHAM NHAT. Khong can biet
+//                  duong kinh ong. Day la che do goc.
+// CHE_DO_MM_DO(2): X = mm, A = do (nhu tren) NHUNG can khai bao DUONG KINH ONG.
+//                  F = toc do MO CAT LUOT TREN MAT ONG, don vi mm/phut.
+//                  He thong tu quy doi goc xoay ra chieu dai CUNG tren mat ong
+//                  roi tinh thoi gian theo quang duong THAT, nho vay 2 truc
+//                  phoi hop dung ty le ma toc do mo cat luon khong doi.
+// CHE_DO_MM   (3): Nhu che do 2 nhung toa do truc A cung nhap bang MM (chieu
+//                  dai cung tren mat ong - kieu "trai phang"), khong phai do.
+#define CHE_DO_RPM    1
+#define CHE_DO_MM_DO  2
+#define CHE_DO_MM     3
+
+#define DEFAULT_CHE_DO           CHE_DO_RPM
+#define DEFAULT_DUONG_KINH_ONG   60.0     // mm
+#define DEFAULT_TOC_DO_BE_MAT    1000.0   // mm/phut - dung khi chua khai bao F
+
+#define SO_PI 3.14159265358979323846
 #define HE_SO_CHAM_LUC_DAU    4      // luc bat dau chay cham gap N lan toc do dat
 
 static const char *TAG = "MAY_CAT_ONG";
@@ -232,6 +253,8 @@ typedef struct {
     // Den bao trang thai
     int pin_den_san_sang, pin_den_dang_chay, pin_den_xong, pin_den_loi;
     // Thong so dieu khien tay
+    int che_do;              // 1 / 2 / 3 - xem phan "3 CHE DO LAM VIEC"
+    double duong_kinh_ong;   // mm - bat buoc cho che do 2 va 3
     double toc_do_tay_rpm;   // toc do khi GIU nut di chuyen
     double nhich_mm;         // moi lan bam nut nhich: truc X di bao nhieu mm
     double nhich_do;         // moi lan bam nut nhich: truc A quay bao nhieu do
@@ -270,6 +293,8 @@ static void cau_hinh_dat_mac_dinh(void)
     g_cfg.pin_den_dang_chay = DEFAULT_DEN_DANG_CHAY;
     g_cfg.pin_den_xong      = DEFAULT_DEN_XONG;
     g_cfg.pin_den_loi       = DEFAULT_DEN_LOI;
+    g_cfg.che_do = DEFAULT_CHE_DO;
+    g_cfg.duong_kinh_ong = DEFAULT_DUONG_KINH_ONG;
     g_cfg.toc_do_tay_rpm = DEFAULT_TOC_DO_TAY_RPM;
     g_cfg.nhich_mm       = DEFAULT_NHICH_MM;
     g_cfg.nhich_do       = DEFAULT_NHICH_DO;
@@ -333,6 +358,8 @@ static void cau_hinh_doc_tu_nvs(void)
     nvs_doc_i32(tay_cam, "den_dang_chay", &g_cfg.pin_den_dang_chay);
     nvs_doc_i32(tay_cam, "den_xong",      &g_cfg.pin_den_xong);
     nvs_doc_i32(tay_cam, "den_loi",       &g_cfg.pin_den_loi);
+    nvs_doc_i32(tay_cam, "che_do", &g_cfg.che_do);
+    nvs_doc_double(tay_cam, "duong_kinh", &g_cfg.duong_kinh_ong);
     nvs_doc_double(tay_cam, "toc_do_tay", &g_cfg.toc_do_tay_rpm);
     nvs_doc_double(tay_cam, "nhich_mm",   &g_cfg.nhich_mm);
     nvs_doc_double(tay_cam, "nhich_do",   &g_cfg.nhich_do);
@@ -371,6 +398,8 @@ static bool cau_hinh_luu_vao_nvs(void)
     nvs_set_i32(tay_cam, "den_dang_chay", g_cfg.pin_den_dang_chay);
     nvs_set_i32(tay_cam, "den_xong",      g_cfg.pin_den_xong);
     nvs_set_i32(tay_cam, "den_loi",       g_cfg.pin_den_loi);
+    nvs_set_i32(tay_cam, "che_do", g_cfg.che_do);
+    nvs_set_blob(tay_cam, "duong_kinh", &g_cfg.duong_kinh_ong, sizeof(double));
     nvs_set_blob(tay_cam, "toc_do_tay", &g_cfg.toc_do_tay_rpm, sizeof(double));
     nvs_set_blob(tay_cam, "nhich_mm",   &g_cfg.nhich_mm, sizeof(double));
     nvs_set_blob(tay_cam, "nhich_do",   &g_cfg.nhich_do, sizeof(double));
@@ -404,6 +433,8 @@ static void cau_hinh_in_ra(void)
            g_cfg.pin_den_xong, g_cfg.pin_den_loi);
     printf("CFG: toc_do_tay_rpm=%.2f nhich_mm=%.4f nhich_do=%.4f\n",
            g_cfg.toc_do_tay_rpm, g_cfg.nhich_mm, g_cfg.nhich_do);
+    printf("CFG: che_do=%d duong_kinh_ong=%.4f\n",
+           g_cfg.che_do, g_cfg.duong_kinh_ong);
     printf("CFG: microstep_moi_vong=%.2f mm_moi_vong_truc_x=%.4f\n",
            g_cfg.microstep_moi_vong, g_cfg.mm_moi_vong_truc_x);
     printf("CFG: dao_keo_a=%d dao_keo_b=%d dao_xoay=%d\n",
@@ -1246,6 +1277,26 @@ static void cap_nhat_den_bao(void)
 // Ca 2 truc se chay DONG THOI. Thoi gian di chuyen duoc lay theo truc CHAM
 // NHAT (truc nao can nhieu thoi gian hon o toc do rpm da cho) de khong truc
 // nao bi vuot toc do gioi han - day la cach xu ly feedrate chuan cua CNC.
+// Doi goc quay (do) sang chieu dai CUNG tren mat ong (mm)
+static double do_sang_cung_mm(double goc_do)
+{
+    return (goc_do / 360.0) * SO_PI * g_cfg.duong_kinh_ong;
+}
+
+// Doi chieu dai cung tren mat ong (mm) sang goc quay (do)
+static double cung_mm_sang_do(double cung_mm)
+{
+    double chu_vi = SO_PI * g_cfg.duong_kinh_ong;
+    if (chu_vi <= 0) return 0.0;
+    return (cung_mm / chu_vi) * 360.0;
+}
+
+// Che do 2 va 3 tinh toc do theo BE MAT ONG thay vi theo vong/phut dong co
+static bool dung_toc_do_be_mat(void)
+{
+    return g_cfg.che_do == CHE_DO_MM_DO || g_cfg.che_do == CHE_DO_MM;
+}
+
 static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
                                double rpm, lenh_dong_co_t *ra)
 {
@@ -1264,10 +1315,26 @@ static bool tao_buoc_di_chuyen(double delta_x_mm, double delta_a_do,
     if (buoc_a < 0) buoc_a = 0;
     if (buoc_x == 0 && buoc_a == 0) return false;
 
-    // Thoi gian can cho tung truc rieng le o toc do rpm -> lay truc lau hon
-    double t_x = vong_x * (60.0 / rpm);
-    double t_a = vong_a * (60.0 / rpm);
-    double tong_thoi_gian = (t_x > t_a) ? t_x : t_a;
+    double tong_thoi_gian;
+
+    if (dung_toc_do_be_mat()) {
+        // ----- CHE DO 2 / 3: giu TOC DO MO CAT LUOT TREN MAT ONG khong doi -----
+        // Goc xoay duoc quy doi ra chieu dai CUNG that tren mat ong, roi lay
+        // quang duong THAT tren mat ong (canh huyen cua tam giac vuong giua
+        // doan keo doc va doan cung). Chia cho toc do be mat ra thoi gian.
+        // Nho vay 2 truc luon phoi hop dung ty le va dau cat luot voi toc do
+        // co dinh, du duong cat cheo bao nhieu.
+        double cung_mm = do_sang_cung_mm(fabs(delta_a_do));
+        double quang_duong_that = sqrt(delta_x_mm * delta_x_mm + cung_mm * cung_mm);
+        double toc_do_mm_giay = rpm / 60.0;   // o day rpm mang nghia mm/phut
+        if (toc_do_mm_giay <= 0) return false;
+        tong_thoi_gian = quang_duong_that / toc_do_mm_giay;
+    } else {
+        // ----- CHE DO 1: rpm la VONG/PHUT dong co, lay truc CHAM NHAT -----
+        double t_x = vong_x * (60.0 / rpm);
+        double t_a = vong_a * (60.0 / rpm);
+        tong_thoi_gian = (t_x > t_a) ? t_x : t_a;
+    }
 
     long troi = (buoc_x > buoc_a) ? buoc_x : buoc_a;  // so vong lap Bresenham
     unsigned long tong_us = (unsigned long)(tong_thoi_gian * 1000000.0);
@@ -1406,6 +1473,18 @@ static bool xu_ly_1_dong_gcode(char *dong_goc, bool nap)
         }
     }
 
+    // ----- CHE DO 3: toa do truc A duoc nhap bang MM CUNG tren mat ong,
+    // doi ngay sang DO de toan bo phan con lai cua firmware van lam viec
+    // thong nhat bang do -----
+    if (g_cfg.che_do == CHE_DO_MM && co_y) {
+        if (g_cfg.duong_kinh_ong <= 0) {
+            printf("Loi: che do 3 can khai bao DUONG KINH ONG > 0 "
+                   "(dung lenh CFG;DUONGKINH;<mm>), dong '%s'\n", dong_goc);
+            return false;
+        }
+        gt_y = cung_mm_sang_do(gt_y);
+    }
+
     // ================== BUOC 1: cac ma G chi doi TRANG THAI ==================
     int ma_di_chuyen = -1;   // G0/G1/G2/G3 tren dong nay
     bool co_g92 = false, co_g4 = false, co_ve_goc = false;
@@ -1509,7 +1588,9 @@ static bool xu_ly_1_dong_gcode(char *dong_goc, bool nap)
     }
 
     if (co_ve_goc) {
-        double rpm_home = (feed_dang_nap > 0) ? feed_dang_nap : RPM_HOME_MAC_DINH;
+        double mac_dinh = dung_toc_do_be_mat() ? DEFAULT_TOC_DO_BE_MAT
+                                              : RPM_HOME_MAC_DINH;
+        double rpm_home = (feed_dang_nap > 0) ? feed_dang_nap : mac_dinh;
         double delta_x = 0.0 - vi_tri_mo_phong_x;
         double delta_a = 0.0 - vi_tri_mo_phong_y;
         vi_tri_mo_phong_x = 0.0;
@@ -1539,6 +1620,12 @@ static bool xu_ly_1_dong_gcode(char *dong_goc, bool nap)
         if (fabs(delta_x) > 1e-9 || fabs(delta_a) > 1e-9) {
             if (feed_dang_nap <= 0) {
                 printf("Loi: chua khai bao F truoc lenh di chuyen, dong '%s'\n", dong_goc);
+                return false;
+            }
+            if (dung_toc_do_be_mat() && g_cfg.duong_kinh_ong <= 0) {
+                printf("Loi: che do %d can khai bao DUONG KINH ONG > 0 "
+                       "(dung lenh CFG;DUONGKINH;<mm>), dong '%s'\n",
+                       g_cfg.che_do, dong_goc);
                 return false;
             }
             lenh_dong_co_t buoc;
@@ -1718,6 +1805,36 @@ static void xu_ly_lenh_tu_pc(char *dong)
             printf("OK_CFG: mm_moi_vong_truc_x = %.4f (da ap dung ngay).\n", gia_tri);
             return;
         }
+        // ----- Che do lam viec va duong kinh ong -----
+        // "CFG;MODE;" dai 9, "CFG;DUONGKINH;" dai 14 - da dem ky
+        if (strncmp(dong_upper, "CFG;MODE;", 9) == 0) {
+            int che_do_moi = atoi(dong_upper + 9);
+            if (che_do_moi < CHE_DO_RPM || che_do_moi > CHE_DO_MM) {
+                printf("Loi: che do phai la 1, 2 hoac 3.\n");
+                return;
+            }
+            if (che_do_moi != CHE_DO_RPM && g_cfg.duong_kinh_ong <= 0) {
+                printf("Loi: che do %d can khai bao duong kinh ong truoc "
+                       "(CFG;DUONGKINH;<mm>).\n", che_do_moi);
+                return;
+            }
+            g_cfg.che_do = che_do_moi;
+            const char *mo_ta =
+                che_do_moi == CHE_DO_RPM   ? "X=mm, A=do, F=vong/phut dong co" :
+                che_do_moi == CHE_DO_MM_DO ? "X=mm, A=do, F=mm/phut tren mat ong" :
+                                             "X=mm, A=mm cung, F=mm/phut tren mat ong";
+            printf("OK_CFG: che_do = %d (%s). Da ap dung ngay.\n", che_do_moi, mo_ta);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;DUONGKINH;", 14) == 0) {
+            double gia_tri = atof(dong_upper + 14);
+            if (gia_tri <= 0) { printf("Loi: duong kinh ong phai > 0.\n"); return; }
+            g_cfg.duong_kinh_ong = gia_tri;
+            printf("OK_CFG: duong_kinh_ong = %.4f mm (chu vi %.2f mm). "
+                   "Da ap dung ngay.\n", gia_tri, SO_PI * gia_tri);
+            return;
+        }
+
         // ----- Thong so bang dieu khien tay -----
         if (strncmp(dong_upper, "CFG;TAY;TOCDO;", 14) == 0) {
             double gia_tri = atof(dong_upper + 14);
