@@ -696,15 +696,6 @@ static bool vong_dem_lay(lenh_dong_co_t *ra)
     return true;
 }
 
-// Xem buoc ke tiep MA KHONG lay ra - dung de biet co con doan cat phia sau
-// khong, tu do quyet dinh co giam toc hay chay thang (noi_lien_sau)
-static bool vong_dem_xem_truoc(lenh_dong_co_t *ra)
-{
-    if (vong_dem_dang_co() == 0) return false;
-    *ra = vong_dem[vd_doc];
-    return true;
-}
-
 // Tra phan con lai cua doan dang cat vao DAU vong dem khi bam PAUSE giua chung.
 // Chi task dong co goi ham nay, ma no cung la nguoi duy nhat doi vd_doc nen an toan.
 static bool vong_dem_tra_lai(const lenh_dong_co_t *buoc)
