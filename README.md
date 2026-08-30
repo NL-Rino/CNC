@@ -110,7 +110,7 @@ o chon trong tab *Hieu chuan* cua phan mem cai dat (lenh `CFG;RAMP;CAT;1`).
 
 | Lenh | Cach dung | Chuong trinh |
 |---|---|---|
-| **EMG / LIMIT** (tu PLC) | Cat xung NGAY LAP TUC, khong giam toc | Dung han |
+| **EMG / LIMIT** | Cat xung NGAY LAP TUC, khong giam toc | Dung han |
 | **STOP** (nut do / phim Esc) | Giam toc cuong buc ~150 xung roi dung | Xoa het |
 | **PAUSE** | Giam toc cuong buc roi DUNG NGAY TAI CHO giua doan | Giu lai |
 
@@ -144,16 +144,45 @@ hoac co tin hieu EMG/LIMIT tu PLC.
 > Day chi la lop bao ve **muc phan mem**. KHONG thay the duoc relay an toan
 > phan cung cat nguon dong luc truc tiep tren duong EMG that.
 
-## 10. So do chan mac dinh (ESP32 devkit goc)
+## 10. Bang dieu khien tay
+
+| Nut | Tac dung |
+|---|---|
+| **X+ / X- / A+ / A-** | GIU la chay lien tuc o toc do da cai, NHA la dung |
+| **NHICH** | GIU nut nay roi bam 1 trong 4 nut tren = nhich dung 1 nac (so mm / do da cai). Giu nguyen khong bi lap nac |
+| **START** | Dang tam dung -> CHAY TIEP. Dang ranh -> chay chuong trinh da nap |
+| **STOP** | Chi TAM DUNG, chuong trinh VAN GIU de bam START chay tiep. Muon huy han phai dung nut STOP tren phan mem may tinh |
+| **EMG** | Dung khan cap - cat xung ngay lap tuc |
+
+Cac nut di chuyen bi KHOA khi chuong trinh dang chay, tranh va cham.
+
+Cai toc do giu nut va so mm/do moi nac trong tab *Hieu chuan* cua phan mem cai dat.
+
+## 11. So do chan mac dinh (ESP32 devkit goc)
 
 ```
 PUL_KEO_A = GPIO4    DIR_KEO_A = GPIO13
 PUL_KEO_B = GPIO14   DIR_KEO_B = GPIO16
 PUL_XOAY  = GPIO25   DIR_XOAY  = GPIO26
 RELAY_PLASMA = GPIO19
-PLC_OUT_READY/RUNNING/DONE/FAULT = GPIO17/18/21/22
-PLC_IN_START/STOP/EMG/LIMIT      = GPIO23/27/32/33
+EMG = GPIO32         LIMIT = GPIO33
+
+Bang dieu khien tay (nut noi GPIO xuong GND, keo len ben trong):
+NUT_X_TIEN = GPIO23  NUT_X_LUI    = GPIO27
+NUT_A_THUAN= GPIO17  NUT_A_NGHICH = GPIO18
+NUT_START  = GPIO21  NUT_STOP     = GPIO22
+NUT_NHICH  = GPIO34  <-- CAN DIEN TRO 10k LEN 3V3 BEN NGOAI
+
+Den bao SAN_SANG/DANG_CHAY/XONG/LOI: MAC DINH TAT (-1) vi het chan
 ```
+
+> **GPIO34 khong co dien tro keo len ben trong.** Phai lap 1 dien tro 10k tu
+> GPIO34 len 3V3, neu khong nut NHICH se bao "dang bam" lung tung.
+
+ESP32 devkit chi con dung 6 chan "sach" (co keo len, khong phai chan strapping)
+la 17, 18, 21, 22, 23, 27 - vua du 6 nut, nut thu 7 phai dung GPIO34.
+Khi doi sang **ESP32-S3** (45 chan thay vi 34) se thoai mai hon: bat lai 4 den
+bao bang `CFG;PIN;DEN_LOI;<so>`... va dua nut NHICH ve chan co keo len.
 
 Khong dung chan ENA cho ca 3 driver - dong co luon giu phanh, khong bao gio
 nha phanh qua phan mem.
@@ -163,7 +192,7 @@ firmware** - cau hinh duoc luu trong NVS (flash noi bo), khong mat khi mat dien.
 Doi chan GPIO thi phai bam *Luu vao flash* roi *Khoi dong lai ESP32* moi co
 hieu luc; doi hieu chuan va dao chieu thi co hieu luc ngay.
 
-## 11. Gioi han hien tai
+## 12. Gioi han hien tai
 
 - Chuong trinh toi da **300 buoc** (`MAX_BUOC_CHUONG_TRINH` trong `main.c`).
   Phan mem van hanh se canh bao truoc neu file vuot qua gioi han nay

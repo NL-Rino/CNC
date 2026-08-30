@@ -136,15 +136,37 @@
 
 #define DEFAULT_RELAY_PLASMA    GPIO_NUM_19
 
-#define DEFAULT_PLC_IN_START    GPIO_NUM_23
-#define DEFAULT_PLC_IN_STOP     GPIO_NUM_27
+// ----- Ngo vao AN TOAN (giu nguyen) -----
 #define DEFAULT_PLC_IN_EMG      GPIO_NUM_32
 #define DEFAULT_PLC_IN_LIMIT    GPIO_NUM_33
 
-#define DEFAULT_PLC_OUT_READY   GPIO_NUM_17
-#define DEFAULT_PLC_OUT_RUNNING GPIO_NUM_18
-#define DEFAULT_PLC_OUT_DONE    GPIO_NUM_21
-#define DEFAULT_PLC_OUT_FAULT   GPIO_NUM_22
+// ----- BANG DIEU KHIEN TAY -----
+// Tat ca nut bam noi kieu: 1 chan vao GPIO, 1 chan vao GND. Firmware bat dien
+// tro keo len ben trong, nen KHONG bam = muc 1, BAM = muc 0.
+// ESP32 devkit chi con 6 chan "sach" (co dien tro keo len ben trong, khong
+// phai chan strapping): 17, 18, 21, 22, 23, 27. Ta can 7 nut nen nut NHICH
+// phai dung GPIO34 - chan nay CHI VAO va KHONG co dien tro keo len ben trong,
+// bat buoc lap dien tro 10k tu GPIO34 len 3V3 o ben ngoai.
+#define DEFAULT_NUT_X_TIEN      GPIO_NUM_23   // keo ong ra (X+)
+#define DEFAULT_NUT_X_LUI       GPIO_NUM_27   // keo ong vao (X-)
+#define DEFAULT_NUT_A_THUAN     GPIO_NUM_17   // xoay ong thuan (A+)
+#define DEFAULT_NUT_A_NGHICH    GPIO_NUM_18   // xoay ong nghich (A-)
+#define DEFAULT_NUT_START       GPIO_NUM_21   // START (dang tam dung thi la RESUME)
+#define DEFAULT_NUT_STOP        GPIO_NUM_22   // STOP = TAM DUNG (khong xoa chuong trinh)
+#define DEFAULT_NUT_NHICH       GPIO_NUM_34   // CAN DIEN TRO 10k LEN 3V3 BEN NGOAI
+
+// ----- Den bao trang thai: MAC DINH TAT (-1) vi ESP32 khong con du chan.
+// Khi doi sang ESP32-S3 (45 chan) thi dat lai bang lenh CFG;PIN;DEN_...;<so>
+#define CHAN_TAT                (-1)
+#define DEFAULT_DEN_SAN_SANG    CHAN_TAT
+#define DEFAULT_DEN_DANG_CHAY   CHAN_TAT
+#define DEFAULT_DEN_XONG        CHAN_TAT
+#define DEFAULT_DEN_LOI         CHAN_TAT
+
+// ----- Dieu khien tay -----
+#define DEFAULT_TOC_DO_TAY_RPM  30.0   // toc do khi GIU nut di chuyen
+#define DEFAULT_NHICH_MM        1.0    // moi lan bam nut nhich: truc X di bao nhieu mm
+#define DEFAULT_NHICH_DO        1.0    // moi lan bam nut nhich: truc A quay bao nhieu do
 
 // So xung dong co can de quay 1 vong (= vi buoc driver x so buoc/vong dong co,
 // vi du dong co 200 buoc/vong, vi buoc 1/8 => 1600 xung/vong)
@@ -164,9 +186,27 @@
 // thi dung cang gap nhung cang de truot buoc. 150 xung o toc do cat ~7.5kHz
 // tuong duong dung sau khoang 20-30 mili giay - coi nhu dung ngay lap tuc.
 #define SO_BUOC_DUNG_GAP      150
+// Chu ky quet cac nut tren bang dieu khien tay (ms). Nut phai doc duoc giong
+// nhau 2 lan lien tiep moi duoc chap nhan, nen thoi gian loc doi = 2 x gia tri nay
+#define THOI_GIAN_QUET_NUT_MS 15
 #define HE_SO_CHAM_LUC_DAU    4      // luc bat dau chay cham gap N lan toc do dat
 
 static const char *TAG = "MAY_CAT_ONG";
+
+// ----- Chan co the bi TAT (dat = -1) khi khong lap thiet bi do -----
+static inline bool chan_dang_dung(int chan) { return chan >= 0; }
+
+// Dat muc cho 1 chan ra, tu bo qua neu chan do dang tat
+static inline void dat_muc(int chan, int muc)
+{
+    if (chan >= 0) gpio_set_level(chan, muc);
+}
+
+// ----- Khai bao truoc (cac ham nay goi cheo nhau giua cac task) -----
+static void xu_ly_dieu_khien_tay(void);
+static void doc_bang_dieu_khien_tay(void);
+static void cap_nhat_den_bao(void);
+static void bat_dau_chay_chuong_trinh(const char *nguon);
 
 // ================== CAU HINH RUNTIME (luu trong NVS - flash) ==================
 // Toan bo chan GPIO va he so hieu chuan co the doi bang lenh CFG;... tu file
@@ -185,8 +225,16 @@ typedef struct {
     int pin_pul_keo_b, pin_dir_keo_b;
     int pin_pul_xoay,  pin_dir_xoay;
     int pin_relay_plasma;
-    int pin_plc_in_start, pin_plc_in_stop, pin_plc_in_emg, pin_plc_in_limit;
-    int pin_plc_out_ready, pin_plc_out_running, pin_plc_out_done, pin_plc_out_fault;
+    int pin_plc_in_emg, pin_plc_in_limit;
+    // Bang dieu khien tay
+    int pin_nut_x_tien, pin_nut_x_lui, pin_nut_a_thuan, pin_nut_a_nghich;
+    int pin_nut_start, pin_nut_stop, pin_nut_nhich;
+    // Den bao trang thai
+    int pin_den_san_sang, pin_den_dang_chay, pin_den_xong, pin_den_loi;
+    // Thong so dieu khien tay
+    double toc_do_tay_rpm;   // toc do khi GIU nut di chuyen
+    double nhich_mm;         // moi lan bam nut nhich: truc X di bao nhieu mm
+    double nhich_do;         // moi lan bam nut nhich: truc A quay bao nhieu do
     double microstep_moi_vong;
     double mm_moi_vong_truc_x;
     bool dao_keo_a, dao_keo_b, dao_xoay;
@@ -209,14 +257,22 @@ static void cau_hinh_dat_mac_dinh(void)
     g_cfg.pin_pul_xoay  = DEFAULT_PUL_XOAY;
     g_cfg.pin_dir_xoay  = DEFAULT_DIR_XOAY;
     g_cfg.pin_relay_plasma = DEFAULT_RELAY_PLASMA;
-    g_cfg.pin_plc_in_start = DEFAULT_PLC_IN_START;
-    g_cfg.pin_plc_in_stop  = DEFAULT_PLC_IN_STOP;
     g_cfg.pin_plc_in_emg   = DEFAULT_PLC_IN_EMG;
     g_cfg.pin_plc_in_limit = DEFAULT_PLC_IN_LIMIT;
-    g_cfg.pin_plc_out_ready   = DEFAULT_PLC_OUT_READY;
-    g_cfg.pin_plc_out_running = DEFAULT_PLC_OUT_RUNNING;
-    g_cfg.pin_plc_out_done    = DEFAULT_PLC_OUT_DONE;
-    g_cfg.pin_plc_out_fault   = DEFAULT_PLC_OUT_FAULT;
+    g_cfg.pin_nut_x_tien   = DEFAULT_NUT_X_TIEN;
+    g_cfg.pin_nut_x_lui    = DEFAULT_NUT_X_LUI;
+    g_cfg.pin_nut_a_thuan  = DEFAULT_NUT_A_THUAN;
+    g_cfg.pin_nut_a_nghich = DEFAULT_NUT_A_NGHICH;
+    g_cfg.pin_nut_start    = DEFAULT_NUT_START;
+    g_cfg.pin_nut_stop     = DEFAULT_NUT_STOP;
+    g_cfg.pin_nut_nhich    = DEFAULT_NUT_NHICH;
+    g_cfg.pin_den_san_sang  = DEFAULT_DEN_SAN_SANG;
+    g_cfg.pin_den_dang_chay = DEFAULT_DEN_DANG_CHAY;
+    g_cfg.pin_den_xong      = DEFAULT_DEN_XONG;
+    g_cfg.pin_den_loi       = DEFAULT_DEN_LOI;
+    g_cfg.toc_do_tay_rpm = DEFAULT_TOC_DO_TAY_RPM;
+    g_cfg.nhich_mm       = DEFAULT_NHICH_MM;
+    g_cfg.nhich_do       = DEFAULT_NHICH_DO;
     g_cfg.microstep_moi_vong = DEFAULT_MICROSTEP_MOI_VONG;
     g_cfg.mm_moi_vong_truc_x = DEFAULT_MM_MOI_VONG_TRUC_X;
     g_cfg.dao_keo_a = false;
@@ -264,14 +320,22 @@ static void cau_hinh_doc_tu_nvs(void)
     nvs_doc_i32(tay_cam, "pul_xoay",  &g_cfg.pin_pul_xoay);
     nvs_doc_i32(tay_cam, "dir_xoay",  &g_cfg.pin_dir_xoay);
     nvs_doc_i32(tay_cam, "relay_plasma", &g_cfg.pin_relay_plasma);
-    nvs_doc_i32(tay_cam, "plc_in_start", &g_cfg.pin_plc_in_start);
-    nvs_doc_i32(tay_cam, "plc_in_stop",  &g_cfg.pin_plc_in_stop);
     nvs_doc_i32(tay_cam, "plc_in_emg",   &g_cfg.pin_plc_in_emg);
     nvs_doc_i32(tay_cam, "plc_in_limit", &g_cfg.pin_plc_in_limit);
-    nvs_doc_i32(tay_cam, "plc_out_ready",   &g_cfg.pin_plc_out_ready);
-    nvs_doc_i32(tay_cam, "plc_out_running", &g_cfg.pin_plc_out_running);
-    nvs_doc_i32(tay_cam, "plc_out_done",    &g_cfg.pin_plc_out_done);
-    nvs_doc_i32(tay_cam, "plc_out_fault",   &g_cfg.pin_plc_out_fault);
+    nvs_doc_i32(tay_cam, "nut_x_tien",   &g_cfg.pin_nut_x_tien);
+    nvs_doc_i32(tay_cam, "nut_x_lui",    &g_cfg.pin_nut_x_lui);
+    nvs_doc_i32(tay_cam, "nut_a_thuan",  &g_cfg.pin_nut_a_thuan);
+    nvs_doc_i32(tay_cam, "nut_a_nghich", &g_cfg.pin_nut_a_nghich);
+    nvs_doc_i32(tay_cam, "nut_start",    &g_cfg.pin_nut_start);
+    nvs_doc_i32(tay_cam, "nut_stop",     &g_cfg.pin_nut_stop);
+    nvs_doc_i32(tay_cam, "nut_nhich",    &g_cfg.pin_nut_nhich);
+    nvs_doc_i32(tay_cam, "den_san_sang",  &g_cfg.pin_den_san_sang);
+    nvs_doc_i32(tay_cam, "den_dang_chay", &g_cfg.pin_den_dang_chay);
+    nvs_doc_i32(tay_cam, "den_xong",      &g_cfg.pin_den_xong);
+    nvs_doc_i32(tay_cam, "den_loi",       &g_cfg.pin_den_loi);
+    nvs_doc_double(tay_cam, "toc_do_tay", &g_cfg.toc_do_tay_rpm);
+    nvs_doc_double(tay_cam, "nhich_mm",   &g_cfg.nhich_mm);
+    nvs_doc_double(tay_cam, "nhich_do",   &g_cfg.nhich_do);
     nvs_doc_double(tay_cam, "microstep", &g_cfg.microstep_moi_vong);
     nvs_doc_double(tay_cam, "mm_vong",   &g_cfg.mm_moi_vong_truc_x);
     nvs_doc_bool(tay_cam, "dao_keo_a", &g_cfg.dao_keo_a);
@@ -294,14 +358,22 @@ static bool cau_hinh_luu_vao_nvs(void)
     nvs_set_i32(tay_cam, "pul_xoay",  g_cfg.pin_pul_xoay);
     nvs_set_i32(tay_cam, "dir_xoay",  g_cfg.pin_dir_xoay);
     nvs_set_i32(tay_cam, "relay_plasma", g_cfg.pin_relay_plasma);
-    nvs_set_i32(tay_cam, "plc_in_start", g_cfg.pin_plc_in_start);
-    nvs_set_i32(tay_cam, "plc_in_stop",  g_cfg.pin_plc_in_stop);
     nvs_set_i32(tay_cam, "plc_in_emg",   g_cfg.pin_plc_in_emg);
     nvs_set_i32(tay_cam, "plc_in_limit", g_cfg.pin_plc_in_limit);
-    nvs_set_i32(tay_cam, "plc_out_ready",   g_cfg.pin_plc_out_ready);
-    nvs_set_i32(tay_cam, "plc_out_running", g_cfg.pin_plc_out_running);
-    nvs_set_i32(tay_cam, "plc_out_done",    g_cfg.pin_plc_out_done);
-    nvs_set_i32(tay_cam, "plc_out_fault",   g_cfg.pin_plc_out_fault);
+    nvs_set_i32(tay_cam, "nut_x_tien",   g_cfg.pin_nut_x_tien);
+    nvs_set_i32(tay_cam, "nut_x_lui",    g_cfg.pin_nut_x_lui);
+    nvs_set_i32(tay_cam, "nut_a_thuan",  g_cfg.pin_nut_a_thuan);
+    nvs_set_i32(tay_cam, "nut_a_nghich", g_cfg.pin_nut_a_nghich);
+    nvs_set_i32(tay_cam, "nut_start",    g_cfg.pin_nut_start);
+    nvs_set_i32(tay_cam, "nut_stop",     g_cfg.pin_nut_stop);
+    nvs_set_i32(tay_cam, "nut_nhich",    g_cfg.pin_nut_nhich);
+    nvs_set_i32(tay_cam, "den_san_sang",  g_cfg.pin_den_san_sang);
+    nvs_set_i32(tay_cam, "den_dang_chay", g_cfg.pin_den_dang_chay);
+    nvs_set_i32(tay_cam, "den_xong",      g_cfg.pin_den_xong);
+    nvs_set_i32(tay_cam, "den_loi",       g_cfg.pin_den_loi);
+    nvs_set_blob(tay_cam, "toc_do_tay", &g_cfg.toc_do_tay_rpm, sizeof(double));
+    nvs_set_blob(tay_cam, "nhich_mm",   &g_cfg.nhich_mm, sizeof(double));
+    nvs_set_blob(tay_cam, "nhich_do",   &g_cfg.nhich_do, sizeof(double));
     nvs_set_blob(tay_cam, "microstep", &g_cfg.microstep_moi_vong, sizeof(double));
     nvs_set_blob(tay_cam, "mm_vong",   &g_cfg.mm_moi_vong_truc_x, sizeof(double));
     nvs_set_u8(tay_cam, "dao_keo_a", g_cfg.dao_keo_a ? 1 : 0);
@@ -320,10 +392,18 @@ static void cau_hinh_in_ra(void)
            g_cfg.pin_pul_keo_a, g_cfg.pin_dir_keo_a, g_cfg.pin_pul_keo_b,
            g_cfg.pin_dir_keo_b, g_cfg.pin_pul_xoay, g_cfg.pin_dir_xoay);
     printf("CFG: relay_plasma=%d\n", g_cfg.pin_relay_plasma);
-    printf("CFG: plc_in_start=%d plc_in_stop=%d plc_in_emg=%d plc_in_limit=%d\n",
-           g_cfg.pin_plc_in_start, g_cfg.pin_plc_in_stop, g_cfg.pin_plc_in_emg, g_cfg.pin_plc_in_limit);
-    printf("CFG: plc_out_ready=%d plc_out_running=%d plc_out_done=%d plc_out_fault=%d\n",
-           g_cfg.pin_plc_out_ready, g_cfg.pin_plc_out_running, g_cfg.pin_plc_out_done, g_cfg.pin_plc_out_fault);
+    printf("CFG: plc_in_emg=%d plc_in_limit=%d\n",
+           g_cfg.pin_plc_in_emg, g_cfg.pin_plc_in_limit);
+    printf("CFG: nut_x_tien=%d nut_x_lui=%d nut_a_thuan=%d nut_a_nghich=%d\n",
+           g_cfg.pin_nut_x_tien, g_cfg.pin_nut_x_lui,
+           g_cfg.pin_nut_a_thuan, g_cfg.pin_nut_a_nghich);
+    printf("CFG: nut_start=%d nut_stop=%d nut_nhich=%d\n",
+           g_cfg.pin_nut_start, g_cfg.pin_nut_stop, g_cfg.pin_nut_nhich);
+    printf("CFG: den_san_sang=%d den_dang_chay=%d den_xong=%d den_loi=%d\n",
+           g_cfg.pin_den_san_sang, g_cfg.pin_den_dang_chay,
+           g_cfg.pin_den_xong, g_cfg.pin_den_loi);
+    printf("CFG: toc_do_tay_rpm=%.2f nhich_mm=%.4f nhich_do=%.4f\n",
+           g_cfg.toc_do_tay_rpm, g_cfg.nhich_mm, g_cfg.nhich_do);
     printf("CFG: microstep_moi_vong=%.2f mm_moi_vong_truc_x=%.4f\n",
            g_cfg.microstep_moi_vong, g_cfg.mm_moi_vong_truc_x);
     printf("CFG: dao_keo_a=%d dao_keo_b=%d dao_xoay=%d\n",
@@ -447,8 +527,7 @@ static void IRAM_ATTR trinh_xu_ly_ngat_an_toan(void *arg)
 static void cau_hinh_ngo_vao(void)
 {
     gpio_config_t cfg_an_toan = {
-        .pin_bit_mask = (1ULL << g_cfg.pin_plc_in_stop) | (1ULL << g_cfg.pin_plc_in_emg) |
-                        (1ULL << g_cfg.pin_plc_in_limit),
+        .pin_bit_mask = (1ULL << g_cfg.pin_plc_in_emg) | (1ULL << g_cfg.pin_plc_in_limit),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -456,38 +535,226 @@ static void cau_hinh_ngo_vao(void)
     };
     gpio_config(&cfg_an_toan);
 
-    gpio_config_t cfg_start = {
-        .pin_bit_mask = (1ULL << g_cfg.pin_plc_in_start),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&cfg_start);
+    // Cac nut bam KHONG dung ngat: nut bam luon bi doi (bounce) vai chuc lan
+    // moi lan bam, dung ngat se sinh ra hang loat kich hoat gia. Doc dinh ky
+    // trong task_an_toan va loc doi bang phan mem thi chac chan hon.
+    // LUU Y: GPIO34/35/36/39 tren ESP32 KHONG co dien tro keo len ben trong,
+    // neu dung cac chan do phai lap dien tro keo len 10k ra 3V3 ben ngoai.
+    const int cac_nut[] = { g_cfg.pin_nut_x_tien, g_cfg.pin_nut_x_lui,
+                            g_cfg.pin_nut_a_thuan, g_cfg.pin_nut_a_nghich,
+                            g_cfg.pin_nut_start, g_cfg.pin_nut_stop,
+                            g_cfg.pin_nut_nhich };
+    uint64_t mat_na_nut = 0;
+    for (int i = 0; i < 7; i++) {
+        if (chan_dang_dung(cac_nut[i])) mat_na_nut |= (1ULL << cac_nut[i]);
+    }
+    if (mat_na_nut) {
+        gpio_config_t cfg_nut = {
+            .pin_bit_mask = mat_na_nut,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&cfg_nut);
+    }
 
     gpio_install_isr_service(0);
-    gpio_isr_handler_add(g_cfg.pin_plc_in_stop, trinh_xu_ly_ngat_an_toan, NULL);
     gpio_isr_handler_add(g_cfg.pin_plc_in_emg, trinh_xu_ly_ngat_an_toan, NULL);
     gpio_isr_handler_add(g_cfg.pin_plc_in_limit, trinh_xu_ly_ngat_an_toan, NULL);
 }
 
 static void cau_hinh_ngo_ra(void)
 {
+    // Chi dua vao mat na nhung chan DANG BAT (den bao co the bi tat bang -1)
+    uint64_t mat_na_ra =
+        (1ULL << g_cfg.pin_pul_keo_a) | (1ULL << g_cfg.pin_dir_keo_a) |
+        (1ULL << g_cfg.pin_pul_keo_b) | (1ULL << g_cfg.pin_dir_keo_b) |
+        (1ULL << g_cfg.pin_pul_xoay)  | (1ULL << g_cfg.pin_dir_xoay)  |
+        (1ULL << g_cfg.pin_relay_plasma);
+    const int cac_den[] = { g_cfg.pin_den_san_sang, g_cfg.pin_den_dang_chay,
+                            g_cfg.pin_den_xong, g_cfg.pin_den_loi };
+    for (int i = 0; i < 4; i++) {
+        if (chan_dang_dung(cac_den[i])) mat_na_ra |= (1ULL << cac_den[i]);
+    }
+
     gpio_config_t cfg_ra = {
-        .pin_bit_mask =
-            (1ULL << g_cfg.pin_pul_keo_a) | (1ULL << g_cfg.pin_dir_keo_a) |
-            (1ULL << g_cfg.pin_pul_keo_b) | (1ULL << g_cfg.pin_dir_keo_b) |
-            (1ULL << g_cfg.pin_pul_xoay)  | (1ULL << g_cfg.pin_dir_xoay)  |
-            (1ULL << g_cfg.pin_relay_plasma) |
-            (1ULL << g_cfg.pin_plc_out_ready) | (1ULL << g_cfg.pin_plc_out_running) |
-            (1ULL << g_cfg.pin_plc_out_done)  | (1ULL << g_cfg.pin_plc_out_fault),
+        .pin_bit_mask = mat_na_ra,
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&cfg_ra);
 
     gpio_set_level(g_cfg.pin_relay_plasma, 0);
-    gpio_set_level(g_cfg.pin_plc_out_running, 0);
-    gpio_set_level(g_cfg.pin_plc_out_done, 0);
-    gpio_set_level(g_cfg.pin_plc_out_fault, 0);
+    dat_muc(g_cfg.pin_den_dang_chay, 0);
+    dat_muc(g_cfg.pin_den_xong, 0);
+    dat_muc(g_cfg.pin_den_loi, 0);
+}
+
+// ================== BANG DIEU KHIEN TAY ==================
+// Task an toan (nhan 0) DOC va LOC DOI cac nut, ghi vao day. Task dong co
+// (nhan 1) doc ra de phat xung - khong bao gio doc GPIO nut truc tiep trong
+// vong phat xung de vong do chay that deu.
+typedef struct {
+    volatile bool giu_x_tien, giu_x_lui;    // dang GIU nut di chuyen truc X
+    volatile bool giu_a_thuan, giu_a_nghich;// dang GIU nut di chuyen truc A
+    volatile bool giu_nhich;                // dang GIU nut nhich tung nac
+    volatile int  yeu_cau_nhich_x;          // +1 / -1 / 0 - bam 1 phat nhich 1 nac
+    volatile int  yeu_cau_nhich_a;
+} nut_tay_t;
+
+static nut_tay_t g_nut;
+
+// Doc 1 nut da loc doi: tra ve true khi DANG BAM (nut noi xuong GND, keo len
+// ben trong nen khong bam = 1, bam = 0)
+static bool dang_bam(int chan)
+{
+    if (!chan_dang_dung(chan)) return false;   // nut nay khong duoc lap
+    return gpio_get_level(chan) == 0;
+}
+
+// ================== PHAT XUNG CHO BANG DIEU KHIEN TAY ==================
+// Chay tren nhan 1 (trong task dong co) khi hang doi chuong trinh dang RONG.
+// Khong bao gio chay xen vao luc dang chay chuong trinh.
+
+// Xuat 1 xung cho truc da chon va cong vao bo dem vi tri
+static void xuat_1_xung_tay(bool truc_x, bool chieu_duong)
+{
+    if (truc_x) {
+        gpio_set_level(g_cfg.pin_pul_keo_a, 1);
+        gpio_set_level(g_cfg.pin_pul_keo_b, 1);
+        esp_rom_delay_us(5);
+        gpio_set_level(g_cfg.pin_pul_keo_a, 0);
+        gpio_set_level(g_cfg.pin_pul_keo_b, 0);
+        tong_xung_keo += chieu_duong ? 1 : -1;
+    } else {
+        gpio_set_level(g_cfg.pin_pul_xoay, 1);
+        esp_rom_delay_us(5);
+        gpio_set_level(g_cfg.pin_pul_xoay, 0);
+        tong_xung_xoay += chieu_duong ? 1 : -1;
+    }
+}
+
+// Dat chieu quay cho truc dang dieu khien tay
+static void dat_chieu_tay(bool truc_x, bool chieu_duong)
+{
+    if (truc_x) {
+        gpio_set_level(g_cfg.pin_dir_keo_a, chieu_duong ^ g_cfg.dao_keo_a);
+        gpio_set_level(g_cfg.pin_dir_keo_b, chieu_duong ^ g_cfg.dao_keo_b);
+    } else {
+        gpio_set_level(g_cfg.pin_dir_xoay, chieu_duong ^ g_cfg.dao_xoay);
+    }
+    esp_rom_delay_us(10);   // thoi gian setup DIR truoc PUL
+}
+
+// Chu ky xung ung voi toc do tay da cai (don vi RPM dong co)
+static uint32_t chu_ky_tay_us(void)
+{
+    double rpm = g_cfg.toc_do_tay_rpm;
+    if (rpm <= 0) rpm = DEFAULT_TOC_DO_TAY_RPM;
+    double chu_ky = 60.0 * 1000000.0 / (rpm * g_cfg.microstep_moi_vong);
+    if (chu_ky < CHU_KY_TOI_THIEU_US) chu_ky = CHU_KY_TOI_THIEU_US;
+    return (uint32_t)chu_ky;
+}
+
+// ----- NHICH tung nac: bam 1 phat di dung mot doan da cai -----
+static void nhich_mot_nac(bool truc_x, bool chieu_duong)
+{
+    double quang_duong = truc_x ? g_cfg.nhich_mm : g_cfg.nhich_do;
+    if (quang_duong <= 0) return;
+
+    long so_xung = truc_x ? doi_mm_sang_xung(quang_duong)
+                          : doi_do_sang_xung(quang_duong);
+    if (so_xung <= 0) return;
+
+    dat_chieu_tay(truc_x, chieu_duong);
+    uint32_t chu_ky = chu_ky_tay_us();
+
+    for (long i = 0; i < so_xung; i++) {
+        if (co_dung_khan_cap) break;
+        xuat_1_xung_tay(truc_x, chieu_duong);
+        esp_rom_delay_us(chu_ky > 5 ? chu_ky - 5 : 5);
+    }
+    printf("NHICH: %s %s%.4f. Vi tri: X=%.2f A=%.2f\n",
+           truc_x ? "X" : "A", chieu_duong ? "+" : "-", quang_duong,
+           doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
+}
+
+// ----- GIU nut: chay lien tuc cho toi khi nha nut -----
+static void chay_giu_nut(bool truc_x, bool chieu_duong)
+{
+    dat_chieu_tay(truc_x, chieu_duong);
+    uint32_t chu_ky_dat = chu_ky_tay_us();
+    uint32_t chu_ky_dau = chu_ky_dat * HE_SO_CHAM_LUC_DAU;
+    uint32_t da_chay = 0;
+
+    dat_muc(g_cfg.pin_den_dang_chay, 1);
+
+    while (1) {
+        // Nha nut, hoac co su co an toan -> giam toc roi dung
+        bool con_giu = truc_x ? (chieu_duong ? g_nut.giu_x_tien : g_nut.giu_x_lui)
+                              : (chieu_duong ? g_nut.giu_a_thuan : g_nut.giu_a_nghich);
+        if (!con_giu || co_dung_khan_cap) break;
+
+        xuat_1_xung_tay(truc_x, chieu_duong);
+
+        // Tang toc dan luc bat dau cho dong co khong bi rung / mat buoc
+        uint32_t chu_ky = chu_ky_dat;
+        if (da_chay < SO_BUOC_TANG_TOC) {
+            uint32_t con_lai = SO_BUOC_TANG_TOC - da_chay;
+            chu_ky = chu_ky_dat +
+                (uint32_t)(((uint64_t)(chu_ky_dau - chu_ky_dat) * con_lai) / SO_BUOC_TANG_TOC);
+        }
+        da_chay++;
+        esp_rom_delay_us(chu_ky > 5 ? chu_ky - 5 : 5);
+    }
+
+    // Giam toc cuong buc roi dung han - khong cat xung dot ngot de khong truot buoc
+    if (!co_dung_khan_cap) {
+        for (uint32_t i = 0; i < SO_BUOC_DUNG_GAP; i++) {
+            xuat_1_xung_tay(truc_x, chieu_duong);
+            uint32_t chu_ky = chu_ky_dat +
+                (uint32_t)(((uint64_t)(chu_ky_dau - chu_ky_dat) * i) / SO_BUOC_DUNG_GAP);
+            esp_rom_delay_us(chu_ky > 5 ? chu_ky - 5 : 5);
+        }
+    }
+
+    dat_muc(g_cfg.pin_den_dang_chay, 0);
+    printf("TAY_DUNG: Vi tri: X=%.2f A=%.2f (xung X=%ld A=%ld)\n",
+           doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do(), tong_xung_keo, tong_xung_xoay);
+}
+
+static void xu_ly_dieu_khien_tay(void)
+{
+    // Khong cho dieu khien tay khi dang co su co, hoac chuong trinh dang chay
+    if (co_dung_khan_cap || dang_chay_chuong_trinh ||
+        trang_thai_chay == DANG_TAM_DUNG) {
+        g_nut.yeu_cau_nhich_x = 0;
+        g_nut.yeu_cau_nhich_a = 0;
+        return;
+    }
+
+    // ----- Uu tien: nhich tung nac (bam roi nha) -----
+    if (g_nut.yeu_cau_nhich_x != 0) {
+        int chieu = g_nut.yeu_cau_nhich_x;
+        g_nut.yeu_cau_nhich_x = 0;
+        nhich_mot_nac(true, chieu > 0);
+        return;
+    }
+    if (g_nut.yeu_cau_nhich_a != 0) {
+        int chieu = g_nut.yeu_cau_nhich_a;
+        g_nut.yeu_cau_nhich_a = 0;
+        nhich_mot_nac(false, chieu > 0);
+        return;
+    }
+
+    // ----- Giu nut de chay lien tuc (chi khi KHONG giu nut nhich) -----
+    if (g_nut.giu_nhich) return;
+
+    // Bam 2 nut nguoc chieu cung luc thi khong chay - tranh hieu nham y dinh
+    if (g_nut.giu_x_tien && !g_nut.giu_x_lui)      chay_giu_nut(true,  true);
+    else if (g_nut.giu_x_lui && !g_nut.giu_x_tien) chay_giu_nut(true,  false);
+    else if (g_nut.giu_a_thuan && !g_nut.giu_a_nghich) chay_giu_nut(false, true);
+    else if (g_nut.giu_a_nghich && !g_nut.giu_a_thuan) chay_giu_nut(false, false);
 }
 
 // ================== TASK: DIEU KHIEN DONG CO ==================
@@ -512,7 +779,10 @@ static void task_dong_co(void *param)
                    doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
         }
 
-        if (xQueueReceive(hang_doi_lenh_dong_co, &lenh, portMAX_DELAY) != pdTRUE) {
+        // Cho lenh voi thoi han ngan (khong cho vo han) de khi hang doi rong
+        // con quay lai phuc vu BANG DIEU KHIEN TAY
+        if (xQueueReceive(hang_doi_lenh_dong_co, &lenh, pdMS_TO_TICKS(20)) != pdTRUE) {
+            xu_ly_dieu_khien_tay();
             continue;
         }
         if (so_buoc_con_lai > 0) so_buoc_con_lai--;
@@ -598,8 +868,8 @@ static void task_dong_co(void *param)
         }
         esp_rom_delay_us(10);  // thoi gian setup DIR truoc PUL
 
-        gpio_set_level(g_cfg.pin_plc_out_running, 1);
-        gpio_set_level(g_cfg.pin_plc_out_done, 0);
+        dat_muc(g_cfg.pin_den_dang_chay, 1);
+        dat_muc(g_cfg.pin_den_xong, 0);
 
         // Bo dem Bresenham - khoi tao giua nguong de phan bo xung deu hon
         int32_t bo_dem_x = (int32_t)(troi / 2);
@@ -734,7 +1004,7 @@ static void task_dong_co(void *param)
         // Trong chuoi cat lien tuc thi GIU nguyen RUNNING, khong ha xuong roi
         // keo len lien tuc o moi diem noi
         if (ket_thuc_chuoi) {
-            gpio_set_level(g_cfg.pin_plc_out_running, 0);
+            dat_muc(g_cfg.pin_den_dang_chay, 0);
         }
 
         // Vi tri KHONG can cong don o day nua - tong_xung_* da duoc cong ngay
@@ -791,7 +1061,7 @@ static void task_dong_co(void *param)
         }
 
         printf("Hoan thanh. Vi tri: X=%.2f A=%.2f\n", doc_vi_tri_keo_mm(), doc_vi_tri_xoay_do());
-        gpio_set_level(g_cfg.pin_plc_out_done, 1);
+        dat_muc(g_cfg.pin_den_xong, 1);
 
         // Luoi an toan: PAUSE roi dung vao khe hep giua luc vong xuat xung vua
         // ket thuc va luc kiem tra nay. Doan da chay xong het nen khong con phan
@@ -806,6 +1076,39 @@ static void task_dong_co(void *param)
     }
 }
 
+// ================== BAT DAU CHAY CHUONG TRINH DA NAP ==================
+// Dung chung cho ca lenh RUN tu may tinh lan nut START tren bang dieu khien
+static void bat_dau_chay_chuong_trinh(const char *nguon)
+{
+    if (so_buoc_da_nap == 0) {
+        printf("Loi: chua co chuong trinh nao duoc nap "
+               "(dung PROG;BEGIN...PROG;END truoc). Nguon: %s\n", nguon);
+        return;
+    }
+    if (co_dung_khan_cap) {
+        printf("Loi: dang o trang thai dung khan cap, khong the chay. Nguon: %s\n", nguon);
+        return;
+    }
+    trang_thai_chay = CHAY_BINH_THUONG;  // reset trang thai truoc khi chay moi
+
+    // Dat bo dem TRUOC khi day vao hang doi: task dong co bat dau chay ngay
+    // khi co buoc dau tien, neu dat sau thi no da tru mat mot so buoc roi
+    so_buoc_con_lai = so_buoc_da_nap;
+    dang_chay_chuong_trinh = true;
+
+    int da_day = 0;
+    for (int i = 0; i < so_buoc_da_nap; i++) {
+        if (xQueueSend(hang_doi_lenh_dong_co, &chuong_trinh[i], pdMS_TO_TICKS(100)) == pdTRUE) {
+            da_day++;
+        } else {
+            printf("Loi: hang doi day, chi day duoc %d/%d buoc.\n", da_day, so_buoc_da_nap);
+            so_buoc_con_lai -= (so_buoc_da_nap - da_day);  // tru phan khong day duoc
+            break;
+        }
+    }
+    printf("RUNNING: da day %d buoc vao hang doi, dang chay... (%s)\n", da_day, nguon);
+}
+
 // ================== TASK: GIAM SAT AN TOAN ==================
 static void task_an_toan(void *param)
 {
@@ -813,24 +1116,125 @@ static void task_an_toan(void *param)
 
     while (1) {
         if (co_dung_khan_cap && !trang_thai_truoc) {
-            gpio_set_level(g_cfg.pin_plc_out_fault, 1);
+            dat_muc(g_cfg.pin_den_loi, 1);
             gpio_set_level(g_cfg.pin_relay_plasma, 0);
-            printf("Loi: DUNG KHAN CAP / STOP / LIMIT tu PLC duoc kich hoat.\n");
+            printf("Loi: DUNG KHAN CAP (EMG) hoac cham CONG TAC HANH TRINH (LIMIT).\n");
         }
         trang_thai_truoc = co_dung_khan_cap;
 
         if (co_dung_khan_cap) {
-            bool het_stop  = gpio_get_level(g_cfg.pin_plc_in_stop)  == 1;
             bool het_emg   = gpio_get_level(g_cfg.pin_plc_in_emg)   == 1;
             bool het_limit = gpio_get_level(g_cfg.pin_plc_in_limit) == 1;
-            if (het_stop && het_emg && het_limit) {
+            if (het_emg && het_limit) {
                 co_dung_khan_cap = false;
-                gpio_set_level(g_cfg.pin_plc_out_fault, 0);
+                dat_muc(g_cfg.pin_den_loi, 0);
                 printf("He thong: da het dieu kien loi, san sang hoat dong tro lai.\n");
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(50));
+        doc_bang_dieu_khien_tay();
+        cap_nhat_den_bao();
+
+        vTaskDelay(pdMS_TO_TICKS(THOI_GIAN_QUET_NUT_MS));
+    }
+}
+
+// ================== DOC BANG DIEU KHIEN TAY (loc doi + bat suon) ==================
+// Chay trong task an toan (nhan 0), quet moi THOI_GIAN_QUET_NUT_MS.
+// Nut bam co doi (bounce): moi lan bam/nha, tiep diem dong-cat vai chuc lan
+// trong khoang 5-20ms. Neu tin ngay lan doc dau tien se sinh ra hang loat lenh
+// gia. Cach loc: chi coi la doi trang thai khi doc duoc GIONG NHAU 2 lan lien tiep.
+static void doc_bang_dieu_khien_tay(void)
+{
+    enum { I_X_TIEN = 0, I_X_LUI, I_A_THUAN, I_A_NGHICH,
+           I_START, I_STOP, I_NHICH, SO_NUT };
+
+    // on_dinh  = trang thai DA LOC DOI (chi doi khi doc duoc giong nhau 2 lan)
+    // tho_truoc = gia tri doc TRUC TIEP cua lan quet truoc, dung de so trung
+    static bool on_dinh[SO_NUT];
+    static bool tho_truoc[SO_NUT];
+
+    const int chan[SO_NUT] = {
+        g_cfg.pin_nut_x_tien, g_cfg.pin_nut_x_lui,
+        g_cfg.pin_nut_a_thuan, g_cfg.pin_nut_a_nghich,
+        g_cfg.pin_nut_start, g_cfg.pin_nut_stop, g_cfg.pin_nut_nhich,
+    };
+
+    bool vua_bam[SO_NUT] = { false };   // suon BAM XUONG cua nut da loc doi
+
+    for (int i = 0; i < SO_NUT; i++) {
+        bool moi = dang_bam(chan[i]);
+        // Chi chap nhan khi doc duoc GIONG NHAU 2 lan lien tiep VA khac trang
+        // thai da chot. LUU Y: tuyet doi khong duoc cap nhat trang thai da chot
+        // bang gia tri THO - lam vay se nuot mat suon bam.
+        if (moi == tho_truoc[i] && moi != on_dinh[i]) {
+            on_dinh[i] = moi;
+            if (moi) vua_bam[i] = true;
+        }
+        tho_truoc[i] = moi;
+    }
+
+    g_nut.giu_nhich = on_dinh[I_NHICH];
+
+    // ----- 4 nut di chuyen -----
+    if (g_nut.giu_nhich) {
+        // Che do NHICH: moi lan BAM di dung 1 nac, giu nut khong lap lai
+        if (vua_bam[I_X_TIEN])   g_nut.yeu_cau_nhich_x = +1;
+        if (vua_bam[I_X_LUI])    g_nut.yeu_cau_nhich_x = -1;
+        if (vua_bam[I_A_THUAN])  g_nut.yeu_cau_nhich_a = +1;
+        if (vua_bam[I_A_NGHICH]) g_nut.yeu_cau_nhich_a = -1;
+        g_nut.giu_x_tien = g_nut.giu_x_lui = false;
+        g_nut.giu_a_thuan = g_nut.giu_a_nghich = false;
+    } else {
+        // Che do GIU: giu nut la chay lien tuc, nha ra la dung
+        g_nut.giu_x_tien   = on_dinh[I_X_TIEN];
+        g_nut.giu_x_lui    = on_dinh[I_X_LUI];
+        g_nut.giu_a_thuan  = on_dinh[I_A_THUAN];
+        g_nut.giu_a_nghich = on_dinh[I_A_NGHICH];
+    }
+
+    // ----- Nut START: dang tam dung thi CHAY TIEP, khong thi CHAY chuong trinh -----
+    if (vua_bam[I_START]) {
+        if (trang_thai_chay == DANG_TAM_DUNG || trang_thai_chay == YEU_CAU_TAM_DUNG) {
+            trang_thai_chay = CHAY_BINH_THUONG;
+            printf("RESUMED: nut START tren bang dieu khien - chay tiep chuong trinh.\n");
+        } else if (dang_chay_chuong_trinh) {
+            printf("He thong: chuong trinh dang chay roi, bo qua nut START.\n");
+        } else {
+            bat_dau_chay_chuong_trinh("nut START tren bang dieu khien");
+        }
+    }
+
+    // ----- Nut STOP: chi TAM DUNG, KHONG xoa chuong trinh -----
+    // (muon huy han chuong trinh thi dung nut STOP tren phan mem may tinh)
+    if (vua_bam[I_STOP]) {
+        if (trang_thai_chay == CHAY_BINH_THUONG && dang_chay_chuong_trinh) {
+            trang_thai_chay = YEU_CAU_TAM_DUNG;
+            printf("He thong: nut STOP tren bang dieu khien - TAM DUNG "
+                   "(chuong trinh van giu, bam START de chay tiep).\n");
+        } else if (trang_thai_chay == DANG_TAM_DUNG) {
+            printf("He thong: dang tam dung san roi.\n");
+        }
+    }
+}
+
+// ================== DEN BAO TRANG THAI ==================
+static void cap_nhat_den_bao(void)
+{
+    bool loi = co_dung_khan_cap;
+    bool chay = dang_chay_chuong_trinh && trang_thai_chay == CHAY_BINH_THUONG;
+    bool tam_dung = (trang_thai_chay == DANG_TAM_DUNG ||
+                     trang_thai_chay == YEU_CAU_TAM_DUNG);
+
+    dat_muc(g_cfg.pin_den_loi, loi ? 1 : 0);
+    dat_muc(g_cfg.pin_den_san_sang, (!loi && !chay) ? 1 : 0);
+    // Den DANG CHAY nhap nhay khi tam dung de phan biet voi dang chay that
+    if (tam_dung) {
+        static bool nhay = false;
+        nhay = !nhay;
+        dat_muc(g_cfg.pin_den_dang_chay, nhay ? 1 : 0);
+    } else if (chay) {
+        dat_muc(g_cfg.pin_den_dang_chay, 1);
     }
 }
 
@@ -1258,8 +1662,8 @@ static void xu_ly_lenh_tu_pc(char *dong)
                 printf("Loi: cu phap CFG;PIN sai. Vi du: CFG;PIN;PUL_KEO_A;4\n");
                 return;
             }
-            if (so_gpio < 0 || so_gpio > 39) {
-                printf("Loi: so GPIO phai trong khoang 0-39.\n");
+            if (so_gpio != -1 && (so_gpio < 0 || so_gpio > 39)) {
+                printf("Loi: so GPIO phai trong khoang 0-39, hoac -1 de TAT.\n");
                 return;
             }
             int *dich = NULL;
@@ -1270,21 +1674,31 @@ static void xu_ly_lenh_tu_pc(char *dong)
             else if (strcmp(ten, "PUL_XOAY") == 0)       dich = &g_cfg.pin_pul_xoay;
             else if (strcmp(ten, "DIR_XOAY") == 0)       dich = &g_cfg.pin_dir_xoay;
             else if (strcmp(ten, "RELAY_PLASMA") == 0)   dich = &g_cfg.pin_relay_plasma;
-            else if (strcmp(ten, "PLC_IN_START") == 0)   dich = &g_cfg.pin_plc_in_start;
-            else if (strcmp(ten, "PLC_IN_STOP") == 0)    dich = &g_cfg.pin_plc_in_stop;
             else if (strcmp(ten, "PLC_IN_EMG") == 0)     dich = &g_cfg.pin_plc_in_emg;
             else if (strcmp(ten, "PLC_IN_LIMIT") == 0)   dich = &g_cfg.pin_plc_in_limit;
-            else if (strcmp(ten, "PLC_OUT_READY") == 0)  dich = &g_cfg.pin_plc_out_ready;
-            else if (strcmp(ten, "PLC_OUT_RUNNING") == 0) dich = &g_cfg.pin_plc_out_running;
-            else if (strcmp(ten, "PLC_OUT_DONE") == 0)   dich = &g_cfg.pin_plc_out_done;
-            else if (strcmp(ten, "PLC_OUT_FAULT") == 0)  dich = &g_cfg.pin_plc_out_fault;
+            else if (strcmp(ten, "NUT_X_TIEN") == 0)     dich = &g_cfg.pin_nut_x_tien;
+            else if (strcmp(ten, "NUT_X_LUI") == 0)      dich = &g_cfg.pin_nut_x_lui;
+            else if (strcmp(ten, "NUT_A_THUAN") == 0)    dich = &g_cfg.pin_nut_a_thuan;
+            else if (strcmp(ten, "NUT_A_NGHICH") == 0)   dich = &g_cfg.pin_nut_a_nghich;
+            else if (strcmp(ten, "NUT_START") == 0)      dich = &g_cfg.pin_nut_start;
+            else if (strcmp(ten, "NUT_STOP") == 0)       dich = &g_cfg.pin_nut_stop;
+            else if (strcmp(ten, "NUT_NHICH") == 0)      dich = &g_cfg.pin_nut_nhich;
+            else if (strcmp(ten, "DEN_SAN_SANG") == 0)   dich = &g_cfg.pin_den_san_sang;
+            else if (strcmp(ten, "DEN_DANG_CHAY") == 0)  dich = &g_cfg.pin_den_dang_chay;
+            else if (strcmp(ten, "DEN_XONG") == 0)       dich = &g_cfg.pin_den_xong;
+            else if (strcmp(ten, "DEN_LOI") == 0)        dich = &g_cfg.pin_den_loi;
             if (!dich) {
                 printf("Loi: ten chan '%s' khong hop le.\n", ten);
                 return;
             }
             *dich = so_gpio;
-            printf("OK_CFG: da dat %s = GPIO%d (chi ap dung sau khi CFG;SAVE + CFG;REBOOT).\n",
-                   ten, so_gpio);
+            if (so_gpio < 0) {
+                printf("OK_CFG: da TAT %s (khong lap thiet bi nay). "
+                       "Can CFG;SAVE + CFG;REBOOT de ap dung.\n", ten);
+            } else {
+                printf("OK_CFG: da dat %s = GPIO%d (chi ap dung sau khi CFG;SAVE + CFG;REBOOT).\n",
+                       ten, so_gpio);
+            }
             return;
         }
         // LUU Y: do dai truyen cho strncmp phai DUNG BANG do dai chuoi tien to.
@@ -1302,6 +1716,28 @@ static void xu_ly_lenh_tu_pc(char *dong)
             if (gia_tri <= 0) { printf("Loi: gia tri mm/vong phai > 0.\n"); return; }
             g_cfg.mm_moi_vong_truc_x = gia_tri;
             printf("OK_CFG: mm_moi_vong_truc_x = %.4f (da ap dung ngay).\n", gia_tri);
+            return;
+        }
+        // ----- Thong so bang dieu khien tay -----
+        if (strncmp(dong_upper, "CFG;TAY;TOCDO;", 14) == 0) {
+            double gia_tri = atof(dong_upper + 14);
+            if (gia_tri <= 0) { printf("Loi: toc do tay phai > 0.\n"); return; }
+            g_cfg.toc_do_tay_rpm = gia_tri;
+            printf("OK_CFG: toc_do_tay_rpm = %.2f (da ap dung ngay).\n", gia_tri);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;TAY;NHICHMM;", 16) == 0) {
+            double gia_tri = atof(dong_upper + 16);
+            if (gia_tri <= 0) { printf("Loi: buoc nhich truc X phai > 0.\n"); return; }
+            g_cfg.nhich_mm = gia_tri;
+            printf("OK_CFG: nhich_mm = %.4f (da ap dung ngay).\n", gia_tri);
+            return;
+        }
+        if (strncmp(dong_upper, "CFG;TAY;NHICHDO;", 16) == 0) {
+            double gia_tri = atof(dong_upper + 16);
+            if (gia_tri <= 0) { printf("Loi: buoc nhich truc A phai > 0.\n"); return; }
+            g_cfg.nhich_do = gia_tri;
+            printf("OK_CFG: nhich_do = %.4f (da ap dung ngay).\n", gia_tri);
             return;
         }
         if (strncmp(dong_upper, "CFG;RAMP;CAT;", 13) == 0) {
@@ -1352,32 +1788,7 @@ static void xu_ly_lenh_tu_pc(char *dong)
     }
 
     if (strcmp(dong_upper, "RUN") == 0) {
-        if (so_buoc_da_nap == 0) {
-            printf("Loi: chua co chuong trinh nao duoc nap (dung PROG;BEGIN...PROG;END truoc).\n");
-            return;
-        }
-        if (co_dung_khan_cap) {
-            printf("Loi: dang o trang thai dung khan cap, khong the RUN.\n");
-            return;
-        }
-        trang_thai_chay = CHAY_BINH_THUONG;  // reset trang thai truoc khi chay moi
-
-        // Dat bo dem TRUOC khi day vao hang doi: task dong co bat dau chay ngay
-        // khi co buoc dau tien, neu dat sau thi no da tru mat mot so buoc roi
-        so_buoc_con_lai = so_buoc_da_nap;
-        dang_chay_chuong_trinh = true;
-
-        int da_day = 0;
-        for (int i = 0; i < so_buoc_da_nap; i++) {
-            if (xQueueSend(hang_doi_lenh_dong_co, &chuong_trinh[i], pdMS_TO_TICKS(100)) == pdTRUE) {
-                da_day++;
-            } else {
-                printf("Loi: hang doi day, chi day duoc %d/%d buoc.\n", da_day, so_buoc_da_nap);
-                so_buoc_con_lai -= (so_buoc_da_nap - da_day);  // tru phan khong day duoc
-                break;
-            }
-        }
-        printf("RUNNING: da day %d buoc vao hang doi, dang chay...\n", da_day);
+        bat_dau_chay_chuong_trinh("lenh RUN tu may tinh");
         return;
     }
 
@@ -1557,7 +1968,7 @@ void app_main(void)
 
     hang_doi_lenh_dong_co = xQueueCreate(MAX_BUOC_CHUONG_TRINH, sizeof(lenh_dong_co_t));
 
-    gpio_set_level(g_cfg.pin_plc_out_ready, 1);
+    dat_muc(g_cfg.pin_den_san_sang, 1);
 
     xTaskCreatePinnedToCore(task_dong_co, "task_dong_co", 4096, NULL, 10, NULL, 1);
     xTaskCreatePinnedToCore(task_an_toan, "task_an_toan", 2048, NULL, 15, NULL, 0);

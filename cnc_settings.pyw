@@ -8,7 +8,7 @@ may hoac sua driver moi can dung, khong dung trong luc van hanh cat hang ngay.
 
 Bo cuc: chia THEO TAB cho de nhin va khong tran man hinh
   Tab 1 "Truc & Driver" : chan PUL/DIR cua 3 dong co + relay plasma + dao chieu
-  Tab 2 "PLC I/O"       : chan vao/ra noi voi PLC
+  Tab 2 "Bang dieu khien tay" : EMG/LIMIT + 7 nut bam + den bao
   Tab 3 "Hieu chuan"    : so xung/vong, mm/vong truc keo
 
 Cach hoat dong: gui lenh CFG;... qua Serial xuong ESP32. ESP32 luu cau hinh
@@ -45,18 +45,29 @@ NHOM_PLASMA = [
     ("RELAY_PLASMA", "Relay bat/tat mo cat plasma"),
 ]
 
-NHOM_PLC_IN = [
-    ("PLC_IN_START", "START"),
-    ("PLC_IN_STOP",  "STOP"),
-    ("PLC_IN_EMG",   "EMG (dung khan cap)"),
-    ("PLC_IN_LIMIT", "LIMIT (cong tac hanh trinh)"),
+NHOM_AN_TOAN = [
+    ("PLC_IN_EMG",   "EMG - dung khan cap"),
+    ("PLC_IN_LIMIT", "LIMIT - cong tac h.trinh"),
 ]
 
-NHOM_PLC_OUT = [
-    ("PLC_OUT_READY",   "READY"),
-    ("PLC_OUT_RUNNING", "RUNNING"),
-    ("PLC_OUT_DONE",    "DONE"),
-    ("PLC_OUT_FAULT",   "FAULT"),
+NHOM_NUT_DI_CHUYEN = [
+    ("NUT_X_TIEN",   "Nut X+  (keo ong ra)"),
+    ("NUT_X_LUI",    "Nut X-  (keo ong vao)"),
+    ("NUT_A_THUAN",  "Nut A+  (xoay thuan)"),
+    ("NUT_A_NGHICH", "Nut A-  (xoay nghich)"),
+]
+
+NHOM_NUT_LENH = [
+    ("NUT_START", "Nut START (= chay tiep)"),
+    ("NUT_STOP",  "Nut STOP (= tam dung)"),
+    ("NUT_NHICH", "Nut NHICH (giu de nhich)"),
+]
+
+NHOM_DEN = [
+    ("DEN_SAN_SANG",  "Den SAN SANG"),
+    ("DEN_DANG_CHAY", "Den DANG CHAY"),
+    ("DEN_XONG",      "Den XONG"),
+    ("DEN_LOI",       "Den LOI"),
 ]
 
 # Anh xa ten khoa trong dong "CFG: ..." tu ESP32 -> ten chan trong GUI
@@ -65,10 +76,12 @@ ANH_XA_CHAN = {
     "pul_keo_b": "PUL_KEO_B", "dir_keo_b": "DIR_KEO_B",
     "pul_xoay": "PUL_XOAY", "dir_xoay": "DIR_XOAY",
     "relay_plasma": "RELAY_PLASMA",
-    "plc_in_start": "PLC_IN_START", "plc_in_stop": "PLC_IN_STOP",
     "plc_in_emg": "PLC_IN_EMG", "plc_in_limit": "PLC_IN_LIMIT",
-    "plc_out_ready": "PLC_OUT_READY", "plc_out_running": "PLC_OUT_RUNNING",
-    "plc_out_done": "PLC_OUT_DONE", "plc_out_fault": "PLC_OUT_FAULT",
+    "nut_x_tien": "NUT_X_TIEN", "nut_x_lui": "NUT_X_LUI",
+    "nut_a_thuan": "NUT_A_THUAN", "nut_a_nghich": "NUT_A_NGHICH",
+    "nut_start": "NUT_START", "nut_stop": "NUT_STOP", "nut_nhich": "NUT_NHICH",
+    "den_san_sang": "DEN_SAN_SANG", "den_dang_chay": "DEN_DANG_CHAY",
+    "den_xong": "DEN_XONG", "den_loi": "DEN_LOI",
 }
 
 
@@ -76,8 +89,8 @@ class SettingsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Cai dat nang cao - May Cat Ong (CHAN GPIO / HIEU CHUAN)")
-        self.root.geometry("720x620")
-        self.root.minsize(660, 560)
+        self.root.geometry("990x730")
+        self.root.minsize(975, 640)
 
         self.ser = None
         self.dang_ket_noi = False
@@ -95,13 +108,13 @@ class SettingsApp:
     # DUNG GIAO DIEN
     # ---------------------------------------------------------
     def _xay_dung_giao_dien(self):
-        pad = {"padx": 8, "pady": 4}
+        pad = {"padx": 8, "pady": 3}
 
         tk.Label(
             self.root,
             text="⚠ Chi doi cau hinh khi may DUNG HAN. Doi sai chan GPIO co the lam mat "
                  "tin hieu EMG/LIMIT hoac dieu khien nham dong co.",
-            font=("Segoe UI", 8, "bold"), fg="#d9534f", justify="left", wraplength=700
+            font=("Segoe UI", 8, "bold"), fg="#d9534f", justify="left", wraplength=970
         ).pack(fill="x", padx=8, pady=(6, 2))
 
         self._dung_khung_ket_noi(pad)
@@ -144,8 +157,7 @@ class SettingsApp:
 
         khung_chan = ttk.LabelFrame(tab, text="Chan xung / chieu cua 3 dong co")
         khung_chan.pack(fill="x", padx=8, pady=6)
-        for i, (ten, mo_ta) in enumerate(NHOM_TRUC):
-            self._them_hang_chan(khung_chan, i, ten, mo_ta)
+        self._them_nhom_2_cot(khung_chan, NHOM_TRUC)
 
         khung_plasma = ttk.LabelFrame(tab, text="Mo cat plasma")
         khung_plasma.pack(fill="x", padx=8, pady=6)
@@ -170,20 +182,27 @@ class SettingsApp:
     # ----- Tab 2: PLC I/O -----
     def _dung_tab_plc(self):
         tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="  PLC I/O  ")
+        self.notebook.add(tab, text="  Bang dieu khien tay  ")
 
-        khung_vao = ttk.LabelFrame(tab, text="Ngo VAO tu PLC (tin hieu dieu khien / an toan)")
-        khung_vao.pack(fill="x", padx=8, pady=6)
-        for i, (ten, mo_ta) in enumerate(NHOM_PLC_IN):
-            self._them_hang_chan(khung_vao, i, ten, mo_ta)
+        khung_at = ttk.LabelFrame(tab, text="Ngo vao AN TOAN")
+        khung_at.pack(fill="x", padx=8, pady=4)
+        self._them_nhom_2_cot(khung_at, NHOM_AN_TOAN)
 
-        khung_ra = ttk.LabelFrame(tab, text="Ngo RA bao trang thai cho PLC")
-        khung_ra.pack(fill="x", padx=8, pady=6)
-        for i, (ten, mo_ta) in enumerate(NHOM_PLC_OUT):
-            self._them_hang_chan(khung_ra, i, ten, mo_ta)
+        khung_dc = ttk.LabelFrame(tab, text="4 nut di chuyen (GIU la chay lien tuc)")
+        khung_dc.pack(fill="x", padx=8, pady=4)
+        self._them_nhom_2_cot(khung_dc, NHOM_NUT_DI_CHUYEN)
+
+        khung_l = ttk.LabelFrame(tab, text="Nut lenh")
+        khung_l.pack(fill="x", padx=8, pady=4)
+        self._them_nhom_2_cot(khung_l, NHOM_NUT_LENH)
+
+        khung_d = ttk.LabelFrame(tab, text="Den bao (dat -1 de TAT - ESP32 het chan nen mac dinh TAT)")
+        khung_d.pack(fill="x", padx=8, pady=4)
+        self._them_nhom_2_cot(khung_d, NHOM_DEN)
 
         ttk.Button(tab, text="Gui tat ca chan trong tab nay",
-                   command=lambda: self._gui_nhom_chan(NHOM_PLC_IN + NHOM_PLC_OUT)
+                   command=lambda: self._gui_nhom_chan(
+                       NHOM_AN_TOAN + NHOM_NUT_DI_CHUYEN + NHOM_NUT_LENH + NHOM_DEN)
                    ).pack(fill="x", padx=8, pady=(2, 8))
 
     # ----- Tab 3: hieu chuan -----
@@ -210,6 +229,36 @@ class SettingsApp:
         ttk.Label(khung, text="quay 1 vong thi ong di duoc bao nhieu mm\n   (vi du 0.2 vong = 1mm  =>  5.0)",
                   foreground="#666").grid(row=1, column=3, padx=6, pady=8, sticky="w")
 
+        khung_tay = ttk.LabelFrame(tab, text="Bang dieu khien tay (ap dung ngay)")
+        khung_tay.pack(fill="x", padx=8, pady=6)
+
+        ttk.Label(khung_tay, text="Toc do khi GIU nut di chuyen (RPM):").grid(
+            row=0, column=0, padx=6, pady=5, sticky="w")
+        self.entry_toc_do_tay = ttk.Entry(khung_tay, width=10)
+        self.entry_toc_do_tay.insert(0, "30")
+        self.entry_toc_do_tay.grid(row=0, column=1, padx=6, pady=5)
+        ttk.Button(khung_tay, text="Gui", width=8,
+                   command=lambda: self._gui_so("CFG;TAY;TOCDO", self.entry_toc_do_tay)
+                   ).grid(row=0, column=2, padx=6, pady=5)
+
+        ttk.Label(khung_tay, text="Nhich truc X moi lan bam (mm):").grid(
+            row=1, column=0, padx=6, pady=5, sticky="w")
+        self.entry_nhich_mm = ttk.Entry(khung_tay, width=10)
+        self.entry_nhich_mm.insert(0, "1.0")
+        self.entry_nhich_mm.grid(row=1, column=1, padx=6, pady=5)
+        ttk.Button(khung_tay, text="Gui", width=8,
+                   command=lambda: self._gui_so("CFG;TAY;NHICHMM", self.entry_nhich_mm)
+                   ).grid(row=1, column=2, padx=6, pady=5)
+
+        ttk.Label(khung_tay, text="Nhich truc A moi lan bam (do):").grid(
+            row=2, column=0, padx=6, pady=5, sticky="w")
+        self.entry_nhich_do = ttk.Entry(khung_tay, width=10)
+        self.entry_nhich_do.insert(0, "1.0")
+        self.entry_nhich_do.grid(row=2, column=1, padx=6, pady=5)
+        ttk.Button(khung_tay, text="Gui", width=8,
+                   command=lambda: self._gui_so("CFG;TAY;NHICHDO", self.entry_nhich_do)
+                   ).grid(row=2, column=2, padx=6, pady=5)
+
         khung_ramp = ttk.LabelFrame(tab, text="Tang toc khi CAT (ap dung ngay)")
         khung_ramp.pack(fill="x", padx=8, pady=6)
 
@@ -222,18 +271,14 @@ class SettingsApp:
 
         ttk.Label(
             khung_ramp,
-            text="TAT (khuyen dung): doan cat chay dung toc do ngay tu xung dau tien, mep cat\n"
-                 "dep, khong bi chay qua o diem bat dau. Cac doan G0 / JOG / ve goc van tang\n"
-                 "giam toc binh thuong.\n"
-                 "BAT: chi bat khi dong co bi RU / MAT BUOC luc vao cat (thieu mo-men). Doi lai\n"
-                 "diem bat dau duong cat se bi chay qua vi dao dau chay cham.",
+            text="TAT (khuyen dung): doan cat chay dung toc do ngay tu xung dau, mep cat dep.\n"
+                 "BAT: chi khi dong co bi RU / MAT BUOC luc vao cat (doi lai mep dau xau hon).",
             justify="left", foreground="#666"
         ).pack(anchor="w", padx=8, pady=(0, 8))
 
         ttk.Label(
             tab,
-            text="Cach kiem tra nhanh: dat goc (ZERO) o file van hanh, cho chay JOG X 100mm,\n"
-                 "do thuoc quang duong that. Neu lech, sua lai 'mm / vong truc keo' theo ty le:\n"
+            text="Kiem tra: ZERO -> JOG X 100mm -> do thuoc. Neu lech, sua 'mm / vong truc keo':\n"
                  "     gia_tri_moi = gia_tri_cu x (quang duong that / 100)",
             justify="left", foreground="#444"
         ).pack(anchor="w", padx=14, pady=10)
@@ -264,17 +309,32 @@ class SettingsApp:
         self.text_log.pack(side="left", fill="both", expand=True, padx=(5, 0), pady=5)
         scroll.pack(side="right", fill="y", padx=(0, 5), pady=5)
 
-    def _them_hang_chan(self, parent, hang, ten, mo_ta):
-        """Them 1 dong: mo ta | TEN_CHAN | o nhap GPIO | nut Gui"""
-        ttk.Label(parent, text=mo_ta, width=32, anchor="w").grid(
-            row=hang, column=0, padx=6, pady=2, sticky="w")
-        ttk.Label(parent, text=ten, width=16, font=("Consolas", 8), foreground="#666", anchor="w").grid(
-            row=hang, column=1, padx=4, pady=2, sticky="w")
-        entry = ttk.Entry(parent, width=6)
-        entry.grid(row=hang, column=2, padx=4, pady=2)
+    def _them_hang_chan(self, parent, hang, ten, mo_ta, cot=0):
+        """Them 1 dong: mo ta | TEN_CHAN | o nhap GPIO | nut Gui.
+
+        cot=0 dat o nua trai, cot=1 dat o nua phai (de xep 2 cot cho gon).
+        """
+        c = cot * 4
+        ttk.Label(parent, text=mo_ta, width=27, anchor="w").grid(
+            row=hang, column=c, padx=(6, 2), pady=2, sticky="w")
+        ttk.Label(parent, text=ten, width=14, font=("Consolas", 8),
+                  foreground="#666", anchor="w").grid(
+            row=hang, column=c + 1, padx=2, pady=2, sticky="w")
+        entry = ttk.Entry(parent, width=5)
+        entry.grid(row=hang, column=c + 2, padx=2, pady=2)
         self.entry_chan[ten] = entry
-        ttk.Button(parent, text="Gui", width=6,
-                   command=lambda t=ten: self._gui_1_chan(t)).grid(row=hang, column=3, padx=6, pady=2)
+        ttk.Button(parent, text="Gui", width=5,
+                   command=lambda t=ten: self._gui_1_chan(t)).grid(
+            row=hang, column=c + 3, padx=(2, 8), pady=2)
+
+    def _them_nhom_2_cot(self, parent, danh_sach):
+        """Xep danh sach chan thanh 2 cot cho do cao cua so."""
+        nua = (len(danh_sach) + 1) // 2
+        for i, (ten, mo_ta) in enumerate(danh_sach):
+            if i < nua:
+                self._them_hang_chan(parent, i, ten, mo_ta, cot=0)
+            else:
+                self._them_hang_chan(parent, i - nua, ten, mo_ta, cot=1)
 
     # ---------------------------------------------------------
     # KET NOI SERIAL
@@ -366,6 +426,12 @@ class SettingsApp:
             self.bien_dao[ma].set(gia_tri == "1")
         elif ten == "ramp_khi_cat":
             self.bien_ramp_cat.set(gia_tri == "1")
+        elif ten == "toc_do_tay_rpm":
+            self.entry_toc_do_tay.delete(0, "end"); self.entry_toc_do_tay.insert(0, gia_tri)
+        elif ten == "nhich_mm":
+            self.entry_nhich_mm.delete(0, "end"); self.entry_nhich_mm.insert(0, gia_tri)
+        elif ten == "nhich_do":
+            self.entry_nhich_do.delete(0, "end"); self.entry_nhich_do.insert(0, gia_tri)
 
     # ---------------------------------------------------------
     # GUI LENH
@@ -382,17 +448,28 @@ class SettingsApp:
             messagebox.showerror("Loi gui lenh", str(loi))
             return False
 
+    @staticmethod
+    def _la_so_chan(chuoi):
+        """Chan hop le: 0..39, hoac -1 de TAT (khong lap thiet bi do)."""
+        try:
+            so = int(chuoi)
+        except ValueError:
+            return False
+        return so == -1 or 0 <= so <= 39
+
     def _gui_1_chan(self, ten):
         gia_tri = self.entry_chan[ten].get().strip()
-        if not gia_tri.isdigit():
-            messagebox.showwarning("Sai du lieu", f"So GPIO cho {ten} phai la so nguyen >= 0.")
+        if not self._la_so_chan(gia_tri):
+            messagebox.showwarning("Sai du lieu",
+                                   f"So GPIO cho {ten} phai trong khoang 0-39, "
+                                   f"hoac -1 de TAT.")
             return
         self._gui_qua_serial(f"CFG;PIN;{ten};{gia_tri}")
 
     def _gui_nhom_chan(self, nhom):
         for ten, _ in nhom:
             gia_tri = self.entry_chan[ten].get().strip()
-            if gia_tri.isdigit():
+            if self._la_so_chan(gia_tri):
                 self._gui_qua_serial(f"CFG;PIN;{ten};{gia_tri}")
                 time.sleep(0.03)
 
@@ -418,6 +495,17 @@ class SettingsApp:
 
     def _gui_dao(self, ma, var):
         self._gui_qua_serial(f"CFG;DAO;{ma};{1 if var.get() else 0}")
+
+    def _gui_so(self, lenh, o_nhap):
+        """Gui 1 thong so dang so qua Serial, kiem tra hop le truoc."""
+        try:
+            gia_tri = float(o_nhap.get())
+            if gia_tri <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Sai du lieu", "Gia tri phai la so > 0.")
+            return
+        self._gui_qua_serial(f"{lenh};{gia_tri}")
 
     def _gui_ramp_cat(self):
         self._gui_qua_serial(f"CFG;RAMP;CAT;{1 if self.bien_ramp_cat.get() else 0}")
