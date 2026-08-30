@@ -186,7 +186,22 @@ hoac co tin hieu EMG/LIMIT tu PLC.
 | **NHICH** | GIU nut nay roi bam 1 trong 4 nut tren = nhich dung 1 nac (so mm / do da cai). Giu nguyen khong bi lap nac |
 | **START** | Dang tam dung -> CHAY TIEP. Dang ranh -> chay chuong trinh da nap |
 | **STOP** | Chi TAM DUNG, chuong trinh VAN GIU de bam START chay tiep. Muon huy han phai dung nut STOP tren phan mem may tinh |
-| **EMG** | Dung khan cap - cat xung ngay lap tuc |
+| **EMG** | Dung khan cap - cat xung ngay lap tuc, cam moi cu dong |
+
+### Cong tac hanh trinh
+
+Co 2 cong tac cho 2 dau hanh trinh truc keo: **X-** va **X+**. Cham 1 trong 2
+la chuong trinh dung ngay lap tuc.
+
+**Van dieu khien tay duoc de LUI RA khoi cong tac**: cham dau X- thi bi cam di
+tiep huong X- nhung VAN bam giu nut X+ de lui ra duoc (va nguoc lai). Truc xoay
+A khong bi anh huong. Neu cam ca 2 huong thi cham cong tac xong se ket cung,
+phai thao may ra moi go duoc.
+
+> Rieng **EMG cam tuyet doi** moi cu dong, khong co ngoai le.
+
+Nen dau ca 2 cong tac hanh trinh kieu **thuong dong** (tat o gat GND) de dut day
+cung tu bao ve - xem muc "Bo chan va doi kieu tin hieu" ben duoi.
 
 Cac nut di chuyen bi KHOA khi chuong trinh dang chay, tranh va cham.
 
@@ -199,7 +214,9 @@ PUL_KEO_A = GPIO4    DIR_KEO_A = GPIO13
 PUL_KEO_B = GPIO14   DIR_KEO_B = GPIO16
 PUL_XOAY  = GPIO25   DIR_XOAY  = GPIO26
 RELAY_PLASMA = GPIO19
-EMG = GPIO32         LIMIT = GPIO33
+EMG = GPIO32
+LIMIT_X_AM    = GPIO33  (cong tac hanh trinh dau X-)
+LIMIT_X_DUONG = GPIO35  <-- CAN DIEN TRO 10k LEN 3V3 BEN NGOAI
 
 Bang dieu khien tay (nut noi GPIO xuong GND, keo len ben trong):
 NUT_X_TIEN = GPIO23  NUT_X_LUI    = GPIO27
@@ -235,11 +252,13 @@ GND, khong can nguon ngoai.
 > Mac dinh firmware dat TAT CA ngo vao la "kich bang GND" (thuong ho) de giu
 > nguyen hanh vi cu - hay tu doi EMG/LIMIT sang thuong dong sau khi dau day.
 
-> **GPIO34 khong co dien tro keo len ben trong.** Phai lap 1 dien tro 10k tu
-> GPIO34 len 3V3, neu khong nut NHICH se bao "dang bam" lung tung.
+> **GPIO34 va GPIO35 khong co dien tro keo len ben trong.** Phai lap dien tro
+> 10k tu moi chan do len 3V3, neu khong nut NHICH va cong tac hanh trinh X+ se
+> bao "dang kich hoat" lung tung.
 
 ESP32 devkit chi con dung 6 chan "sach" (co keo len, khong phai chan strapping)
-la 17, 18, 21, 22, 23, 27 - vua du 6 nut, nut thu 7 phai dung GPIO34.
+la 17, 18, 21, 22, 23, 27 - vua du 6 nut. Nut thu 7 (NHICH) va cong tac hanh
+trinh X+ phai dung GPIO34 va GPIO35 kem dien tro keo len ben ngoai.
 Khi doi sang **ESP32-S3** (45 chan thay vi 34) se thoai mai hon: bat lai 4 den
 bao bang `CFG;PIN;DEN_LOI;<so>`... va dua nut NHICH ve chan co keo len.
 

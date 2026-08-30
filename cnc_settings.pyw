@@ -7,10 +7,10 @@ day la cai dat lien quan truc tiep PHAN CUNG / FIRMWARE - chi nguoi lap dat
 may hoac sua driver moi can dung, khong dung trong luc van hanh cat hang ngay.
 
 Bo cuc: chia THEO TAB cho de nhin va khong tran man hinh
-  Tab 1 "Che do"        : chon 1 trong 3 che do lam viec + duong kinh ong
-  Tab 2 "Truc & Driver" : chan PUL/DIR cua 3 dong co + relay plasma + dao chieu
-  Tab 2 "Bang dieu khien tay" : EMG/LIMIT + 7 nut bam + den bao
-  Tab 3 "Hieu chuan"    : so xung/vong, mm/vong truc keo
+  Tab 1 "Che do"              : chon 1 trong 3 che do lam viec + duong kinh ong
+  Tab 2 "Truc & Driver"       : chan PUL/DIR 3 dong co + relay plasma + dao chieu
+  Tab 3 "Bang dieu khien tay" : EMG + 2 cong tac hanh trinh + 7 nut bam + den bao
+  Tab 4 "Hieu chuan"          : so xung/vong, mm/vong, dieu khien tay, ramp
 
 Cach hoat dong: gui lenh CFG;... qua Serial xuong ESP32. ESP32 luu cau hinh
 vao NVS (bo nho flash noi bo), KHONG mat khi mat dien / rut usb.
@@ -47,8 +47,9 @@ NHOM_PLASMA = [
 ]
 
 NHOM_AN_TOAN = [
-    ("PLC_IN_EMG",   "EMG - dung khan cap"),
-    ("PLC_IN_LIMIT", "LIMIT - cong tac h.trinh"),
+    ("PLC_IN_EMG",    "EMG - dung khan cap"),
+    ("LIMIT_X_AM",    "Cong tac h.trinh dau X-"),
+    ("LIMIT_X_DUONG", "Cong tac h.trinh dau X+"),
 ]
 
 NHOM_NUT_DI_CHUYEN = [
@@ -72,12 +73,14 @@ NHOM_DEN = [
 ]
 
 # Cac ngo VAO co the doi kieu tin hieu (ten dung trong lenh CFG;TINHIEU)
-CAC_NGO_VAO = {"PLC_IN_EMG", "PLC_IN_LIMIT", "NUT_X_TIEN", "NUT_X_LUI",
-               "NUT_A_THUAN", "NUT_A_NGHICH", "NUT_START", "NUT_STOP", "NUT_NHICH"}
+CAC_NGO_VAO = {"PLC_IN_EMG", "LIMIT_X_AM", "LIMIT_X_DUONG",
+               "NUT_X_TIEN", "NUT_X_LUI", "NUT_A_THUAN", "NUT_A_NGHICH",
+               "NUT_START", "NUT_STOP", "NUT_NHICH"}
 
 # Ten khoa kieu tin hieu trong dong "CFG: th_..." -> ten chan
 ANH_XA_TIN_HIEU = {
-    "th_emg": "PLC_IN_EMG", "th_limit": "PLC_IN_LIMIT",
+    "th_emg": "PLC_IN_EMG",
+    "th_limit_am": "LIMIT_X_AM", "th_limit_duong": "LIMIT_X_DUONG",
     "th_x_tien": "NUT_X_TIEN", "th_x_lui": "NUT_X_LUI",
     "th_a_thuan": "NUT_A_THUAN", "th_a_nghich": "NUT_A_NGHICH",
     "th_start": "NUT_START", "th_stop": "NUT_STOP", "th_nhich": "NUT_NHICH",
@@ -92,7 +95,8 @@ ANH_XA_CHAN = {
     "pul_keo_b": "PUL_KEO_B", "dir_keo_b": "DIR_KEO_B",
     "pul_xoay": "PUL_XOAY", "dir_xoay": "DIR_XOAY",
     "relay_plasma": "RELAY_PLASMA",
-    "plc_in_emg": "PLC_IN_EMG", "plc_in_limit": "PLC_IN_LIMIT",
+    "plc_in_emg": "PLC_IN_EMG",
+    "limit_x_am": "LIMIT_X_AM", "limit_x_duong": "LIMIT_X_DUONG",
     "nut_x_tien": "NUT_X_TIEN", "nut_x_lui": "NUT_X_LUI",
     "nut_a_thuan": "NUT_A_THUAN", "nut_a_nghich": "NUT_A_NGHICH",
     "nut_start": "NUT_START", "nut_stop": "NUT_STOP", "nut_nhich": "NUT_NHICH",
