@@ -1,14 +1,24 @@
 name: Dong goi file EXE cho Windows
 
-# Chay tu dong moi khi co thay doi phan mem, hoac bam nut chay tay trong tab Actions.
-# Ket qua: 2 file .exe chay doc lap, tai ve o muc Releases hoac o phan Artifacts
-# cua lan chay.
+# Chay tu dong moi khi co thay doi phan mem, hoac bam nut chay tay trong tab
+# Actions. Ket qua: 2 file .exe chay doc lap, tai ve o muc Releases hoac o
+# phan Artifacts cua lan chay.
+#
+# Phan mem chinh nay viet bang C: dung bang cach bien dich cheo tu Linux sang
+# Windows (mingw-w64) nen nhanh va cho ra dung file da kiem tra o may phat
+# trien. Ban Python cu van duoc giu lai va van chay het bai kiem tra, dong goi
+# thanh .exe du phong.
 on:
   workflow_dispatch:
   push:
     branches:
       - claude/plasma-cnc-firmware-5obgaw
     paths:
+      - "loi_c/**"
+      - "win/**"
+      - "kiem_tra_c/**"
+      - "main/main.c"
+      - "Makefile"
       - "**.pyw"
       - "loi/**.py"
       - "kiem_tra/**.py"
@@ -18,7 +28,69 @@ permissions:
   contents: write
 
 jobs:
-  dong-goi:
+  # =====================================================================
+  # PHAN MEM CHINH (ban C) - kiem tra roi bien dich cheo sang Windows
+  # =====================================================================
+  ban-c:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Lay ma nguon
+        uses: actions/checkout@v4
+
+      - name: Cai trinh bien dich cheo sang Windows
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 make
+
+      - name: Chay toan bo bai kiem tra
+        # Gom: thu vien moi noi, xep bai, mo phong 3D + the xep 2D, va lop ket
+        # noi noi thang vao firmware that qua mot cap cong ao (pty)
+        run: make kiem-tra
+
+      - name: Dung 2 file .exe
+        run: make
+
+      - name: Kiem tra 2 file exe da tao ra
+        run: |
+          ls -la ra
+          test -f ra/MayCatOng.exe
+          test -f ra/MayCatOng_CaiDat.exe
+          file ra/MayCatOng.exe | grep -q "PE32+ executable (GUI) x86-64"
+          file ra/MayCatOng_CaiDat.exe | grep -q "PE32+ executable (GUI) x86-64"
+
+      - name: Tai file len phan Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MayCatOng-windows-exe
+          path: ra/*.exe
+          retention-days: 90
+
+      - name: Tao ban phat hanh de tai ve truc tiep
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "exe-${{ github.run_number }}" \
+            ra/MayCatOng.exe ra/MayCatOng_CaiDat.exe \
+            --target "${{ github.sha }}" \
+            --title "Phan mem may cat ong - ban ${{ github.run_number }}" \
+            --notes "Hai file chay doc lap cho Windows, KHONG can cai gi them.
+
+          - **MayCatOng.exe** - phan mem van hanh hang ngay (thu vien moi noi, the xep 2D, mo phong 3D, mo file .NC, jog, chay/dung)
+          - **MayCatOng_CaiDat.exe** - phan mem cai dat nang cao (chan GPIO, hieu chuan, dao chieu truc)
+
+          Viet bang C thuan, chi dung Win32 + GDI co san trong Windows nen file
+          nho va mo len la chay ngay.
+
+          Tai ve, chay truc tiep. Windows Defender co the canh bao file exe moi tao:
+          chon **More info** roi **Run anyway**.
+
+          Nho nap lai firmware trong \`main/main.c\` cho ESP32 de dung duoc day du tinh nang."
+
+  # =====================================================================
+  # BAN PYTHON CU - giu lai lam du phong, van chay het bai kiem tra
+  # =====================================================================
+  ban-python:
     runs-on: windows-latest
 
     steps:
@@ -50,7 +122,7 @@ jobs:
       - name: Dong goi phan mem VAN HANH
         run: >
           python -m PyInstaller --onefile --windowed --noconfirm
-          --name MayCatOng
+          --name MayCatOng_Python
           --hidden-import serial.tools.list_ports
           --collect-submodules loi
           may_cat_ong.pyw
@@ -58,39 +130,13 @@ jobs:
       - name: Dong goi phan mem CAI DAT
         run: >
           python -m PyInstaller --onefile --windowed --noconfirm
-          --name MayCatOng_CaiDat
+          --name MayCatOng_CaiDat_Python
           --hidden-import serial.tools.list_ports
           cnc_settings.pyw
 
-      - name: Kiem tra 2 file exe da tao ra
-        shell: pwsh
-        run: |
-          Get-ChildItem dist
-          if (-not (Test-Path dist/MayCatOng.exe)) { throw "Thieu MayCatOng.exe" }
-          if (-not (Test-Path dist/MayCatOng_CaiDat.exe)) { throw "Thieu MayCatOng_CaiDat.exe" }
-
-      - name: Tai file len phan Artifacts
+      - name: Tai ban du phong len phan Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MayCatOng-windows-exe
+          name: MayCatOng-windows-exe-ban-python-du-phong
           path: dist/*.exe
-          retention-days: 90
-
-      - name: Tao ban phat hanh de tai ve truc tiep
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          gh release create "exe-${{ github.run_number }}" \
-            dist/MayCatOng.exe dist/MayCatOng_CaiDat.exe \
-            --target "${{ github.sha }}" \
-            --title "Phan mem may cat ong - ban ${{ github.run_number }}" \
-            --notes "Hai file chay doc lap cho Windows, KHONG can cai Python.
-
-          - **MayCatOng.exe** - phan mem van hanh hang ngay (nap G-code, xem truoc, mo phong 3D, jog, chay/dung)
-          - **MayCatOng_CaiDat.exe** - phan mem cai dat nang cao (chan GPIO, hieu chuan, dao chieu truc)
-
-          Tai ve, chay truc tiep. Windows Defender co the canh bao file exe moi tao:
-          chon **More info** roi **Run anyway**.
-
-          Nho nap lai firmware trong \`main/main.c\` cho ESP32 de dung duoc day du tinh nang."
+          retention-days: 30

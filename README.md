@@ -5,19 +5,73 @@ xoay ong), dieu khien bang G-CODE CHUAN qua cong USB COM.
 
 ## Thanh phan
 
+Ca firmware lan phan mem may tinh deu viet bang **C**, nen doc mot chuong
+trinh la hieu duoc chuong trinh kia - cung mot kieu dat ten, cung mot cach bao
+loi, va bo doc so G-code o hai ben giong het nhau.
+
+### Firmware (chay tren ESP32)
+
 | File | Cong dung |
 |---|---|
 | `main/main.c` | Firmware ESP-IDF cho ESP32 (bo dieu khien) |
-| `may_cat_ong.pyw` | **Phan mem chinh** - thu vien moi noi, mo phong 3D, chay may |
-| `loi/thu_vien_moi_noi.py` | Toan hinh hoc sinh duong cat cho tung kieu ghep ong |
-| `loi/phan_tich_gcode.py` | Doc / kiem tra / chuan hoa / nen G-code |
-| `loi/ve_3d.py` | Mo phong 3D: ong quay va truot, dau cat dung yen |
-| `loi/xep_2d.py` | The xep 2D: keo tha nhat cat doc cay ong, co thuoc do |
-| `loi/ket_noi.py` | Duong day toi ESP32: thuong luong baud, nap dan |
-| `cnc_settings.pyw` | Phan mem CAI DAT nang cao (chan GPIO, hieu chuan) |
-| `kiem_tra/test_thu_vien.py` | Kiem chung toan hoc cua thu vien moi noi |
-| `kiem_tra/test_xep.py` | Kiem chung phan xep bai va do khoang cach |
-| `build_exe.bat` | Dong goi phan mem thanh file `.exe` chay doc lap |
+
+### Phan tinh toan (dung chung, khong dinh gi toi giao dien)
+
+| File | Cong dung |
+|---|---|
+| `loi_c/thu_vien_moi_noi.c` | Toan hinh hoc sinh duong cat cho tung kieu ghep ong |
+| `loi_c/phan_tich_gcode.c` | Doc / kiem tra / chuan hoa / nen G-code |
+| `loi_c/ve_3d.c` | Mo phong 3D: ong quay va truot, dau cat dung yen |
+| `loi_c/xep_2d.c` | The xep 2D: keo tha nhat cat doc cay ong, co thuoc do |
+| `loi_c/ket_noi.c` | Duong day toi ESP32: thuong luong baud, nap dan |
+| `loi_c/cong_com.c` | Mo / doc / ghi cong COM (Win32 va Linux) |
+| `loi_c/nen_tang.c` | Thoi gian, luong nen, khoa (Win32 va POSIX) |
+| `loi_c/hinh_ve.c` | Danh sach hinh: mat, hinh chu nhat, doan thang, chu |
+| `loi_c/loi_chung.c` | Kieu du lieu chung va cach bao loi |
+
+Hai module `ve_3d` va `xep_2d` **khong goi mot ham do hoa nao**. Chung chi dung
+ra mot `KhungVe` gom cac hinh da sap xep san, lop giao dien chi viec ve lai.
+Nho vay toan bo phep chieu va bo tri kiem tra duoc bang chuong trinh dong lenh,
+va sau nay doi thu vien do hoa khong phai sua mot dong tinh toan nao.
+
+### Giao dien (Windows)
+
+| File | Cong dung |
+|---|---|
+| `win/may_cat_ong.c` | **Phan mem chinh** - thu vien moi noi, mo phong 3D, chay may |
+| `win/cnc_settings.c` | Phan mem CAI DAT nang cao (chan GPIO, hieu chuan) |
+| `win/gdi_ve.c` | Ve `KhungVe` len cua so bang GDI, co anh dem |
+| `win/tien_ich.c` | Phong chu, mau, tao o dieu khien, hop thoai |
+
+Chi dung **Win32 + GDI co san trong Windows** - khong mot thu vien ngoai nao,
+khong runtime nao phai cai kem. Hai file `.exe` khoang 480 KB va 380 KB.
+
+### Kiem tra
+
+| File | Cong dung |
+|---|---|
+| `kiem_tra_c/test_thu_vien.c` | Kiem chung toan hoc cua thu vien moi noi |
+| `kiem_tra_c/test_xep.c` | Kiem chung phan xep bai va do khoang cach |
+| `kiem_tra_c/test_ve.c` | Kiem chung mo phong 3D va the xep 2D |
+| `kiem_tra_c/test_ket_noi.c` | Nap dan that, noi thang vao firmware qua cong ao |
+| `kiem_tra_c/gia_lap/` | Gia lap ESP32: chay DUNG code `main/main.c` tren may tinh |
+
+`test_ket_noi` tao mot cap cong ao (pty), mot dau giao cho gia lap ESP32 lam
+stdin/stdout, dau kia cho lop `ket_noi` mo y het mot cong COM that. Nho vay ca
+duong "may tinh <-> ESP32" duoc chay that: nap dan, dieu tiet luu luong bang
+`OK;<cho_trong>`, hoi `BUF`, bam RUN som khi da dem du buoc.
+
+### Ban Python cu (giu lai lam du phong)
+
+| File | Cong dung |
+|---|---|
+| `may_cat_ong.pyw`, `cnc_settings.pyw` | Hai chuong trinh ban cu |
+| `loi/*.py` | Phan tinh toan ban cu |
+| `kiem_tra/*.py` | Bai kiem tra ban cu |
+
+Ban Python van chay duoc va van duoc kiem tra day du trong CI. No la moc de
+doi chieu: **moi con so ban C tinh ra deu da duoc so voi ban Python**, xem muc
+14.
 
 ## 1. Nap firmware cho ESP32
 
@@ -39,24 +93,38 @@ dang cat, va Task Watchdog se bao loi neu van bat.
 
 ## 2. Chay phan mem tren may tinh
 
-Cach 1 - chay truc tiep bang Python (can cai Python + `pip install pyserial`):
+**Cach de nhat: tai file `.exe` san.** Vao tab **Actions** tren GitHub, chon
+lan chay moi nhat, tai muc **Artifacts** - hoac vao thang muc **Releases**. Co
+2 file:
+
+- `MayCatOng.exe` - phan mem van hanh hang ngay
+- `MayCatOng_CaiDat.exe` - phan mem cai dat nang cao
+
+Copy 2 file nay di dau cung chay duoc, **khong can cai Python hay bat cu thu
+gi khac** - phan mem viet bang C, chi dung nhung thu co san trong Windows.
+
+> Windows Defender co the canh bao file `.exe` moi tao. Day la canh bao chung
+> cho moi file exe chua ky so, chon "More info" -> "Run anyway".
+
+**Tu dung lay** (can `make` va bo bien dich cheo mingw-w64):
+
+```
+make            # dung 2 file .exe vao thu muc ra/
+make kiem-tra   # dung va chay toan bo bai kiem tra ngay tren may Linux
+make sach       # xoa het file da dung
+```
+
+Tren Linux/macOS, `make kiem-tra` chay duoc het moi bai - ke ca bai nap dan
+that vao firmware qua cong ao - vi phan tinh toan khong dinh gi toi Windows.
+Chi phan giao dien moi can Windows de chay.
+
+**Ban Python cu** van con, dung khi can sua nhanh ma khong co bo bien dich
+(can Python + `pip install pyserial`):
 
 ```
 python may_cat_ong.pyw           (phan mem chinh)
 python cnc_settings.pyw          (cai dat phan cung)
 ```
-
-Cach 2 - dong goi thanh `.exe` chay doc lap (may khac khong can cai Python):
-
-Nhay doi chuot vao `build_exe.bat`. Sau 1-2 phut se co 2 file trong thu muc `dist`:
-
-- `dist\MayCatOng.exe` - phan mem van hanh hang ngay
-- `dist\MayCatOng_CaiDat.exe` - phan mem cai dat nang cao
-
-Copy 2 file nay di dau cung chay duoc.
-
-> Windows Defender co the canh bao file `.exe` moi tao. Day la canh bao chung
-> cho moi file dong goi bang PyInstaller, chon "More info" -> "Run anyway".
 
 ## 2b. Phan mem chinh - mot cua so lo het
 
@@ -149,6 +217,28 @@ thi thay bang chinh mat vien bi. Nho vay:
   chi lech duoi 0,001 mm
 
 Dat ve **0** neu muon giu dung cong thuc toan hoc.
+
+### "Phai la mot duong sin om tron ong kia chu?" - dung, nhung la kieu KHAC
+
+Hai hinh nay de lan, ma chon nham la cat hong phoi:
+
+| | Duong cat | Kieu trong thu vien |
+|---|---|---|
+| **Mot** duong sin | `X = r*cos(A)` - len xuong mot lan tron vong ong | `goc_90` (cut ni, cat vat) |
+| Sin **chinh luu** | `X = r*|cos(A)|` - len xuong HAI lan, co goc gap | `nhanh_t_90` (nhanh chu T) |
+
+Ca hai deu nam **dung tren mat ong chinh** - da do lai: `goc_90` khop
+`r*cos(A)` sai so 1,4e-14 mm, `nhanh_t_90` khop `r*|cos(A)|` sai so 1,5e-13 mm.
+Khac nhau o cho di toi dau thi dung:
+
+- **Mot sin**: ong nhanh cham mat ong chinh o mot phia roi **di xuyen qua**, thut
+  sau qua duong tam ong chinh 30 mm (voi D60). Do la hinh cua hai ong **cut ngang
+  roi up vao nhau** - tuc la cai cut ni goc 90 do.
+- **Sin chinh luu**: ong nhanh **dung tren** mat ong chinh, om lay no. Khong cho
+  nao an sau qua mat ong. Do la nhanh chu T dam vao suon ong.
+
+Neu muon "mot duong sin om tron ong" thi chon **`goc_90`** - no san trong thu
+vien, va no khong co goc nhon nao nen cung khong can bo tron.
 
 ### The XEP 2D
 
@@ -532,3 +622,47 @@ len la du du.
   toi diem cuoi (phan mem se in canh bao khi gap)
 - Muc *Nesting* moi chi sap xep cac mieng noi tiep nhau tren mot cay ong theo
   chieu dai, chua toi uu xoay quanh truc de tiet kiem vat lieu
+
+## 14. Chuyen phan mem sang C - da doi chieu nhung gi
+
+Phan mem may tinh truoc day viet bang Python/Tkinter, nay viet lai bang C cho
+dong bo voi firmware. Cach lam de chac chan khong mat mat gi: **cho cung mot
+dau vao chay qua ca hai ban roi so tung ky tu.**
+
+| Doi chieu | Cach thu | Ket qua |
+|---|---|---|
+| Sinh G-code | Bai 3 mieng (goc_90 @250mm, goc_45 @180mm xoay 90 do, nhanh_t_90 @220mm, khe 8mm, chua dau 20mm, cay 1200mm) | **1437 dong giong het tung ky tu**, `tong_dung` = 758.4264 mm o ca hai ban |
+| Doc / chuan hoa / nen G-code | 4 bai (bai 1437 dong tren, mot file `.nc` that, mot bai dai, mot file "hanh ha" gom viet lien khong dau cach, chu thuong, inch, toa do tuong doi, so dang `.5` / `5.` / `1E5`) x 3 che do x 2 duong kinh | **Giong het** ca ban chuan hoa, ban nen, tung doan duong di va tung canh bao |
+| Mo phong 3D | 4 truong hop (chua chay, dang chay o 3 vi tri khac nhau) | **Giong het** tung toa do man hinh, tung mau, tung dong chu |
+| The xep 2D | 4 truong hop (chua chon, chon tung nhat cat) | **Giong het** tung toa do, ke ca thuoc do va duong do khoang cach |
+| Xep bai va do khoang cach | Chay `kiem_tra/test_xep.py` va ban C `kiem_tra_c/test_xep.c` | **Moi con so giong het** (ban C in them ten nhat cat o 3 dong) |
+| Nap dan xuong ESP32 | 900 dong (dai hon vong dem cua ESP32) qua cong ao vao dung firmware that | Bam CHAY som dung luc, ESP32 bao nhan du 900 dong, khong loi |
+
+Trong luc doi chieu bo doc G-code, tim ra mot cho ban C doc thieu: dong chi co
+truc, viet cach ra nhu `A 135` (khong co chu G, an theo lenh G1 dong truoc) thi
+ban C bo qua. Da sua cho khop voi ban Python - va do cung la cach may CAM that
+hay xuat file.
+
+### Nhung gi giu nguyen y het
+
+Toan bo tinh nang deu duoc chuyen sang, khong bot cai nao: thu vien 3 kieu moi
+noi va bo tron day yen ngua, the xep 2D keo tha co thuoc do, mo phong 3D quay
+duoc va an bot duong cat, mo file `.NC`, 3 che do lam viec, Ctrl+Z/Y/C/X/V,
+nap dan, tam dung va chay tiep co hoi duc lo, dieu khien tay, va ca chuong
+trinh cai dat phan cung voi 21 chan GPIO cung 2 so do chan goi y san.
+
+### Cho khac giua hai ban
+
+- **Nhanh hon va nhe hon**: file `.exe` khoang 480 KB thay vi ~40 MB, mo len la
+  chay ngay, khong cho khoi dong Python
+- **Khong can cai gi**: khong Python, khong pyserial, khong runtime
+- Duong COM va bo dem noi tiep viet thang bang API cua he dieu hanh
+  (`CreateFile`/`ReadFile` tren Windows, `termios` tren Linux) thay vi pyserial
+- Phan ve dung GDI voi anh dem nen keo xoay mo phong khong bi nhay hinh
+
+### Chua chay thu duoc phan nao
+
+Phan **giao dien** moi chi kiem duoc den muc bien dich sach `-Wall -Wextra`
+khong mot canh bao va lien ket day du, vi may dung de phat trien la Linux
+khong co Windows de mo cua so len. Phan tinh toan ben duoi thi nguoc lai -
+chay that va da doi chieu tung con so nhu bang tren.

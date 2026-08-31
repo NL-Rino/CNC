@@ -5,3 +5,4 @@ dist/
 *.spec
 sdkconfig
 sdkconfig.old
+ra/
