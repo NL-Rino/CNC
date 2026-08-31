@@ -110,10 +110,12 @@ Toan bo cong thuc deu la **hinh hoc chinh xac**, khong xap xi.
 Chay `python kiem_tra/test_thu_vien.py` va `python kiem_tra/test_xep.py` de xem
 toan bo phan kiem chung.
 
-**Ve chuyen long yen ngua trong nhu co goc nhon:** khi ong nhanh va ong chinh
-BANG duong kinh nhau thi day yen dung la mot diem nhon that - cong thuc rut gon
-thanh `L = R*|cos(phi)|`, ma ham `|cos|` gap goc tai 90 do. Do la hinh hoc dung
-chu khong phai loi ve. Ong chinh cang to hon thi duong cat cang tron:
+### Long yen ngua va cho gap goc o day yen
+
+Khi ong nhanh va ong chinh **bang duong kinh nhau** thi day long yen ngua dung
+la mot diem NHON that - cong thuc rut gon thanh `L = R*|cos(phi)|`, ma ham
+`|cos|` gap goc tai 90 do. Do la hinh hoc dung chu khong phai loi ve. Ong chinh
+cang to hon thi duong cat cang tron:
 
 | Ong nhanh | Ong chinh | Goc gap o suon yen |
 |---|---|---|
@@ -121,6 +123,32 @@ chu khong phai loi ve. Ong chinh cang to hon thi duong cat cang tron:
 | D60 | D70 | 3,8 do |
 | D60 | D90 | 2,0 do |
 | D60 | D200 | 0,7 do |
+
+**Nhung diem nhon do MAY KHONG CAT DUOC.** Tai day yen, truc X phai doi chieu
+ngay lap tuc o het toc do cat - do duoc **+-0,4 mm moi buoc** voi ong D60 vao
+D60. Dong co buoc khong dao chieu nhu vay duoc: no se TRUOT BUOC va vi tri sau
+do sai het. Ma mo plasma co be rong mach cat huu han cung khong tao noi goc do.
+
+Vi vay kieu *Ong nhanh chu T* co o **Bo tron day yen**, mac dinh 2 mm:
+
+| Ban kinh bo tron | X doi chieu | Vat lieu de lai o day yen |
+|---|---|---|
+| 0 mm (cong thuc chinh xac) | +-0,3993 mm/buoc | 0 |
+| 1 mm | +-0,0832 mm/buoc | 0,40 mm |
+| **2 mm (mac dinh)** | **+-0,0403 mm/buoc** | **0,80 mm** |
+| 3 mm | +-0,0267 mm/buoc | 1,23 mm |
+
+Cach lam la **lan mot vien bi** ban kinh do doc theo day rooc (phep dong hinh
+thai hoc): cho nao vien bi lot vao duoc thi giu nguyen, cho nao hep hon vien bi
+thi thay bang chinh mat vien bi. Nho vay:
+
+- Ket qua **luon >= duong cat goc** - chi de lai vat lieu chu khong cat lem them
+- Vat lieu de lai (0,8 mm) **nho hon be rong mach cat plasma** (~1,2 mm) nen thuc
+  te mat luon
+- Cho nao von da tron hon vien bi thi khong bi dong toi: ong chinh D70 tro len
+  chi lech duoi 0,001 mm
+
+Dat ve **0** neu muon giu dung cong thuc toan hoc.
 
 ### The XEP 2D
 

@@ -88,7 +88,7 @@ def _do_min(so_diem_moi_vong, r):
 # CAC KIEU MOI NOI
 # =============================================================================
 def yen_ngua(r, r_chinh, goc_do=90.0, lech_tam=0.0, khe_ho=0.0, x_goc=0.0,
-             so_diem=360):
+             bo_tron=0.0, so_diem=360):
     """YEN NGUA (fishmouth): dau ong nhanh om vao than ong chinh.
 
     Hinh hoc:
@@ -135,7 +135,73 @@ def yen_ngua(r, r_chinh, goc_do=90.0, lech_tam=0.0, khe_ho=0.0, x_goc=0.0,
                 f"Lech tam {lech_tam:.1f}mm qua lon: ong nhanh tut ra ngoai ong chinh")
         L = (math.sqrt(duoi_can) - r * math.cos(phi) * cos_t) / sin_t
         diem.append((x_goc + L - khe_ho, a))
+    diem = _bo_tron_day(diem, r, bo_tron)
     return DuongCat(f"Yen ngua {goc_do:g} do", diem, kin=True)
+
+
+def _bo_tron_day(diem, r, ban_kinh):
+    """Bo tron nhung cho duong cat GAP GOC qua gat, bang phep "lan bi".
+
+    TAI SAO CAN: khi ong nhanh va ong chinh BANG duong kinh nhau, day long yen
+    ngua la mot diem NHON that su (cong thuc rut gon thanh L = R*|cos phi|).
+    Tai diem do truc X phai doi chieu NGAY LAP TUC o het toc do cat - do duoc
+    +-0,4 mm moi buoc. Dong co buoc khong the dao chieu nhu vay: no se TRUOT
+    BUOC va vi tri sau do sai het. Ma mo plasma co be rong mach cat huu han
+    cung khong tao noi goc nhon do.
+
+    CACH LAM: lan mot vien bi ban kinh R doc theo day rooc (phep "dong" hinh
+    thai hoc - closing). Cho nao vien bi lot vao duoc thi giu nguyen; cho nao
+    hep hon vien bi thi thay bang chinh mat vien bi.
+      - Ket qua LUON >= duong cat goc, tuc chi de lai vat lieu chu khong cat
+        lem them - dieu can thiet vi cat lem la hong phoi
+      - Cho nao von da tron hon vien bi thi KHONG bi dong toi
+      - Do o mat phang trai phang (s = r*phi) nen vien bi tron that trong
+        khong gian, khong bi meo theo duong kinh ong
+
+    Voi ong chinh chi to hon ong nhanh vai mm, do gap da con +-0,01 mm nen
+    ham nay gan nhu khong lam gi.
+    """
+    if ban_kinh <= 0 or len(diem) < 5:
+        return diem
+    # Doi sang (s, x): s la chieu dai cung that tren mat ong
+    s_x = [(math.radians(a) * r, x) for x, a in diem]
+    n = len(s_x)
+    chu_vi = 2 * math.pi * r
+
+    def lay(i):
+        """Lay diem theo chi so VONG TRON - duong cat khep kin nen day yen o
+        goc 0 do cung phai duoc bo tron nhu moi cho khac."""
+        j = i % (n - 1)
+        vong = (i - j) // (n - 1)
+        s, x = s_x[j]
+        return s + vong * chu_vi, x
+
+    # So diem nam trong ban kinh vien bi
+    buoc_s = chu_vi / (n - 1)
+    k = max(1, int(math.ceil(ban_kinh / max(buoc_s, 1e-9))))
+
+    def vom(t):
+        d = ban_kinh * ban_kinh - t * t
+        return math.sqrt(d) if d > 0 else 0.0
+
+    # Phinh ra roi co lai = phep DONG: lap day nhung day rooc hep hon vien bi
+    phinh = []
+    for i in range(n):
+        s0, _ = lay(i)
+        phinh.append(max(lay(i + t)[1] + vom(lay(i + t)[0] - s0)
+                         for t in range(-k, k + 1)))
+
+    def phinh_vong(i):
+        return phinh[i % (n - 1)]
+
+    ra = []
+    for i in range(n):
+        s0, x0 = lay(i)
+        x_moi = min(phinh_vong(i + t) - vom(lay(i + t)[0] - s0)
+                    for t in range(-k, k + 1))
+        # Chan chan: khong bao gio cat sau hon duong cat goc
+        ra.append((max(x_moi, x0), diem[i][1]))
+    return ra
 
 
 def cat_thang(x_goc=0.0, so_diem=180, r=30.0):
@@ -337,9 +403,11 @@ THU_VIEN = [
         "GIUA than mot ong chinh. Ong chinh khong phai cat gi.",
         [ThamSo("d_chinh", "Duong kinh ong chinh", 60.0, "mm", 1.0),
          ThamSo("khe_ho", "Khe ho han", 0.0, "mm", 0.0, 10.0),
+         ThamSo("bo_tron", "Bo tron day yen", 2.0, "mm", 0.0, 20.0),
          ThamSo("a", "Goc dat mieng cat", 0.0, "do")],
         lambda r, g, x: _xoay(yen_ngua(r, g["d_chinh"] / 2.0, 90.0,
-                                       khe_ho=g["khe_ho"], x_goc=x), g.get("a", 0.0)),
+                                       khe_ho=g["khe_ho"], x_goc=x,
+                                       bo_tron=g.get("bo_tron", 0.0)), g.get("a", 0.0)),
         "nhanh_t_90"),
 ]
 

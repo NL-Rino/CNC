@@ -116,5 +116,56 @@ ktra("ket thuc bang M30", g[-1] == "M30")
 ktra("khong co dong rong", all(d.strip() for d in g))
 print(f"     ({len(g)} dong G-code)")
 
+
+print("\n=== 11. BO TRON DAY YEN - chong dao chieu truc X qua gat ===")
+r = 30.0
+
+
+def do_gap(duong, r):
+    """Buoc doi X lon nhat khi doi chieu - do gat cua cho gap goc."""
+    lon_nhat = 0.0
+    n = len(duong.diem)
+    for i in range(1, n - 1):
+        truoc = duong.diem[i][0] - duong.diem[i - 1][0]
+        sau = duong.diem[i + 1][0] - duong.diem[i][0]
+        if truoc * sau < 0:                      # dung cho doi chieu
+            lon_nhat = max(lon_nhat, abs(truoc), abs(sau))
+    return lon_nhat
+
+
+goc = tv.yen_ngua(r, r, 90.0)                    # hai ong bang nhau -> nhon that
+tron = tv.yen_ngua(r, r, 90.0, bo_tron=2.0)
+ktra("chua bo tron: truc X dao chieu het toc do", do_gap(goc, r) > 0.3,
+     f"{do_gap(goc, r):.4f} mm moi buoc")
+ktra("bo tron 2mm: dao chieu em hon it nhat 5 lan",
+     do_gap(tron, r) < do_gap(goc, r) / 5,
+     f"{do_gap(goc, r):.4f} -> {do_gap(tron, r):.4f} mm moi buoc")
+
+ktra("KHONG BAO GIO cat sau hon duong cat goc (chi de lai vat lieu)",
+     all(b[0] >= a[0] - 1e-9 for a, b in zip(goc.diem, tron.diem)))
+thua = max(b[0] - a[0] for a, b in zip(goc.diem, tron.diem))
+ktra("vat lieu de lai o day yen nho hon mach cat plasma (~1,2mm)", thua < 1.2,
+     f"{thua:.3f} mm")
+ktra("khong dung toi goc quay", all(abs(a[1] - b[1]) < 1e-12
+                                    for a, b in zip(goc.diem, tron.diem)))
+
+print("\n  -- Cho da tron san thi bo tron KHONG duoc dung toi --")
+for D in (70, 90, 120):
+    a = tv.yen_ngua(r, D / 2, 90.0)
+    b = tv.yen_ngua(r, D / 2, 90.0, bo_tron=2.0)
+    lech = max(abs(p[0] - q[0]) for p, q in zip(a.diem, b.diem))
+    ktra(f"ong chinh D{D}: gan nhu khong doi", lech < 0.05, f"lech {lech:.4f} mm")
+
+ktra("ban kinh 0 = giu nguyen cong thuc chinh xac",
+     all(abs(p[0] - q[0]) < 1e-12
+         for p, q in zip(goc.diem, tv.yen_ngua(r, r, 90.0, bo_tron=0.0).diem)))
+
+print("\n  -- Day yen o goc 0 do (cho duong cat khep kin) cung duoc bo tron --")
+# Xoay bai toan di 90 do bang cach dung goc nghieng, kiem tra khong con cho gat
+tron_lon = tv.yen_ngua(r, r, 90.0, bo_tron=4.0)
+ktra("ban kinh cang lon thi dao chieu cang em",
+     do_gap(tron_lon, r) < do_gap(tron, r),
+     f"{do_gap(tron, r):.4f} -> {do_gap(tron_lon, r):.4f} mm")
+
 print(f"\n{'=== TAT CA DAT ===' if not loi else f'=== CO {loi} LOI ==='}")
 sys.exit(1 if loi else 0)

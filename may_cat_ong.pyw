@@ -250,7 +250,7 @@ class UngDung:
         luoi.pack(fill="x", padx=6, pady=4)
         self.bieu_tuong = {}
         for i, kieu in enumerate(tv.THU_VIEN):
-            c = tk.Canvas(luoi, width=72, height=54, highlightthickness=0,
+            c = tk.Canvas(luoi, width=68, height=42, highlightthickness=0,
                           bg=MAU["khung"], cursor="hand2")
             c.grid(row=0, column=i, padx=2)
             c.bind("<Button-1>", lambda e, kk=kieu: self._chon_kieu(kk))
@@ -282,17 +282,15 @@ class UngDung:
                                                                 padx=2, pady=2)
         h = tk.Frame(khung_tay, bg=MAU["khung"])
         h.pack(fill="x", padx=8, pady=1)
-        tk.Label(h, text="Toc do tay:", bg=MAU["khung"],
+        tk.Label(h, text="Toc do:", bg=MAU["khung"],
                  font=("Segoe UI", 8)).pack(side="left")
-        ttk.Entry(h, width=6, textvariable=self.toc_do_tay).pack(side="left", padx=3)
+        ttk.Entry(h, width=5, textvariable=self.toc_do_tay).pack(side="left", padx=2)
         tk.Label(h, text="RPM", bg=MAU["khung"], fg=MAU["chu_mo"],
+                 font=("Segoe UI", 8)).pack(side="left", padx=(0, 8))
+        tk.Label(h, text="Buoc:", bg=MAU["khung"],
                  font=("Segoe UI", 8)).pack(side="left")
-        h = tk.Frame(khung_tay, bg=MAU["khung"])
-        h.pack(fill="x", padx=8, pady=1)
-        tk.Label(h, text="Buoc nhich:", bg=MAU["khung"],
-                 font=("Segoe UI", 8)).pack(side="left")
-        ttk.Entry(h, width=5, textvariable=self.buoc_nhich).pack(side="left", padx=3)
-        tk.Label(h, text="mm/do", bg=MAU["khung"], fg=MAU["chu_mo"],
+        ttk.Entry(h, width=5, textvariable=self.buoc_nhich).pack(side="left", padx=2)
+        tk.Label(h, text="mm", bg=MAU["khung"], fg=MAU["chu_mo"],
                  font=("Segoe UI", 8)).pack(side="left")
         ttk.Button(khung_tay, text="DAT GOC 0 TAI DAY", command=self._dat_goc
                    ).pack(fill="x", padx=8, pady=(2, 8))
@@ -493,7 +491,7 @@ class UngDung:
 
     # ------------------------------------------------------------------
     def _the_duoi(self):
-        self.the_duoi = ttk.Notebook(self.root, height=150)
+        self.the_duoi = ttk.Notebook(self.root, height=142)
         self.the_duoi.pack(fill="both", padx=6, pady=(0, 4))
 
         # ----- EDIT -----
@@ -510,12 +508,15 @@ class UngDung:
             self.bang.column(cot, width=rong, anchor="w")
         self.bang.pack(side="left", fill="both", expand=True)
         self.bang.bind("<<TreeviewSelect>>", self._chon_dong_bang)
+        # Bon nut xep 2x2 cho do chiem chieu cao - the duoi khong cao lam
         cot_nut = tk.Frame(trai, bg=MAU["khung"])
         cot_nut.pack(side="left", fill="y", padx=4)
-        for chu, ham in (("Len", lambda: self._doi_cho(-1)),
-                         ("Xuong", lambda: self._doi_cho(+1)),
-                         ("Xoa", self._xoa_muc), ("Xoa het", self._xoa_het)):
-            ttk.Button(cot_nut, text=chu, width=8, command=ham).pack(pady=1)
+        for i, (chu, ham) in enumerate((("Len", lambda: self._doi_cho(-1)),
+                                        ("Xuong", lambda: self._doi_cho(+1)),
+                                        ("Xoa", self._xoa_muc),
+                                        ("Xoa het", self._xoa_het))):
+            ttk.Button(cot_nut, text=chu, width=8, command=ham).grid(
+                row=i // 2, column=i % 2, padx=1, pady=1)
 
         phai = tk.Frame(t, bg=MAU["khung"])
         phai.pack(side="left", fill="both", expand=True, padx=4, pady=4)
