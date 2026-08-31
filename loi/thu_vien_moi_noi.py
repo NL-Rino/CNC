@@ -281,109 +281,137 @@ def khia_chu_v(r, goc_uon_do, x_tam=0.0, a_tam=0.0, phan_chu_vi=0.5, so_diem=180
 # BANG DANG KY - giao dien doc bang nay de dung thu vien, khong biet chi tiet
 # =============================================================================
 class KieuMoiNoi:
+    """Mot kieu ghep trong thu vien. Giao dien chi doc bang nay, khong biet chi tiet."""
+
     def __init__(self, ma, ten, mo_ta, tham_so, ham, hinh):
         self.ma = ma
         self.ten = ten
         self.mo_ta = mo_ta
-        self.tham_so = tham_so     # [ThamSo, ...]
+        self.tham_so = tham_so     # [ThamSo, ...] - KHONG gom vi tri X
         self._ham = ham
         self.hinh = hinh           # ma hinh minh hoa (ve_bieu_tuong doc)
 
-    def sinh(self, duong_kinh_ong, gia_tri):
-        """Sinh DuongCat. gia_tri la dict {ma_tham_so: so}."""
+    def sinh(self, duong_kinh_ong, gia_tri, x_goc=0.0):
+        """Sinh DuongCat tai vi tri x_goc doc theo ong.
+
+        Vi tri KHONG con la tham so nguoi dung nhap: no duoc tinh tu chieu dai
+        cua tung khuc ong khi xep bai (xem xep_bai).
+        """
         for ts in self.tham_so:
             loi = ts.kiem_tra(gia_tri.get(ts.ma, ts.mac_dinh))
             if loi:
                 raise ValueError(loi)
-        return self._ham(duong_kinh_ong / 2.0, gia_tri)
+        return self._ham(duong_kinh_ong / 2.0, gia_tri, x_goc)
 
 
+def _xoay(duong, a_lech):
+    """Xoay ca duong cat quanh truc ong mot goc (de dat mieng cat huong khac)."""
+    if not a_lech:
+        return duong
+    return DuongCat(duong.ten, [(x, a + a_lech) for x, a in duong.diem], duong.kin)
+
+
+# ----- BA KIEU GHEP -----
+# Ghep hai ong thanh mot goc thi MOI DAU chi can vat NUA goc do, roi up hai mat
+# vat vao nhau. Vi du goc 90 do -> moi dau vat 45 do; goc 45 do -> vat 22,5 do.
 THU_VIEN = [
     KieuMoiNoi(
-        "yen_ngua_t", "Yen ngua chu T (90 do)",
-        "Dau ong om vao than ong chinh, vuong goc. Kieu ghep pho bien nhat.",
+        "goc_90", "Ghep goc 90 do (dau ong)",
+        "Noi hai ong thanh goc vuong o dau ong. Moi dau vat 45 do (nua cua 90), "
+        "up hai mat vat vao nhau la thanh goc vuong.",
+        [ThamSo("a", "Goc dat mieng vat", 0.0, "do")],
+        lambda r, g, x: _xoay(cat_vat(r, 45.0, x), g.get("a", 0.0)),
+        "goc_90"),
+
+    KieuMoiNoi(
+        "goc_45", "Ghep goc 45 do (dau ong)",
+        "Noi hai ong thanh goc 45 do o dau ong. Moi dau vat 22,5 do "
+        "(nua cua 45), up hai mat vat vao nhau.",
+        [ThamSo("a", "Goc dat mieng vat", 0.0, "do")],
+        lambda r, g, x: _xoay(cat_vat(r, 22.5, x), g.get("a", 0.0)),
+        "goc_45"),
+
+    KieuMoiNoi(
+        "nhanh_t_90", "Ong nhanh chu T 90 do",
+        "Ong nay la ONG NHANH, dau duoc cat long yen ngua de om vuong goc vao "
+        "GIUA than mot ong chinh. Ong chinh khong phai cat gi.",
         [ThamSo("d_chinh", "Duong kinh ong chinh", 60.0, "mm", 1.0),
-         ThamSo("x", "Vi tri dau ong", 0.0, "mm"),
-         ThamSo("khe_ho", "Khe ho han", 0.0, "mm", 0.0, 10.0)],
-        lambda r, g: yen_ngua(r, g["d_chinh"] / 2.0, 90.0,
-                              khe_ho=g["khe_ho"], x_goc=g["x"]),
-        "yen_ngua_t"),
-
-    KieuMoiNoi(
-        "yen_ngua_goc", "Yen ngua goc nghieng",
-        "Nhu chu T nhung ong nhanh dam vao ong chinh o goc bat ky.",
-        [ThamSo("d_chinh", "Duong kinh ong chinh", 60.0, "mm", 1.0),
-         ThamSo("goc", "Goc giua 2 ong", 45.0, "do", 5.0, 175.0),
-         ThamSo("lech_tam", "Do lech tam", 0.0, "mm"),
-         ThamSo("x", "Vi tri dau ong", 0.0, "mm"),
-         ThamSo("khe_ho", "Khe ho han", 0.0, "mm", 0.0, 10.0)],
-        lambda r, g: yen_ngua(r, g["d_chinh"] / 2.0, g["goc"],
-                              lech_tam=g["lech_tam"], khe_ho=g["khe_ho"],
-                              x_goc=g["x"]),
-        "yen_ngua_goc"),
-
-    KieuMoiNoi(
-        "cat_vat", "Cat vat (ghep co)",
-        "Cat nghieng mot goc. Hai ong cung vat nua goc co roi up vao nhau "
-        "thi thanh khuyu - vi du co 90 do thi moi dau vat 45 do.",
-        [ThamSo("goc", "Goc vat", 45.0, "do", 0.0, 88.0),
-         ThamSo("x", "Vi tri cat", 0.0, "mm")],
-        lambda r, g: cat_vat(r, g["goc"], g["x"]),
-        "cat_vat"),
-
-    KieuMoiNoi(
-        "cat_thang", "Cat thang (cat dut)",
-        "Cat vuong goc voi truc ong - cat ong thanh doan, hoac lam phang dau ong.",
-        [ThamSo("x", "Vi tri cat", 100.0, "mm")],
-        lambda r, g: cat_thang(g["x"], r=r),
-        "cat_thang"),
-
-    KieuMoiNoi(
-        "lo_tron", "Lo tron",
-        "Khoan mot lo tron xuyen tam qua thanh ong.",
-        [ThamSo("d_lo", "Duong kinh lo", 20.0, "mm", 0.5),
-         ThamSo("x", "Vi tri tam lo", 100.0, "mm"),
-         ThamSo("a", "Goc dat lo", 0.0, "do")],
-        lambda r, g: lo_tron(r, g["d_lo"], g["x"], g["a"]),
-        "lo_tron"),
-
-    KieuMoiNoi(
-        "ranh_doc", "Ranh dai doc truc",
-        "Ranh dai bo tron hai dau, nam doc theo chieu dai ong.",
-        [ThamSo("dai", "Chieu dai ranh", 40.0, "mm", 1.0),
-         ThamSo("rong", "Chieu rong ranh", 12.0, "mm", 0.5),
-         ThamSo("x", "Vi tri tam ranh", 100.0, "mm"),
-         ThamSo("a", "Goc dat ranh", 0.0, "do")],
-        lambda r, g: ranh_dai(r, g["dai"], g["rong"], g["x"], g["a"], doc_truc=True),
-        "ranh_doc"),
-
-    KieuMoiNoi(
-        "ranh_vong", "Ranh dai theo chieu vong",
-        "Nhu tren nhung ranh nam vat ngang quanh than ong.",
-        [ThamSo("dai", "Chieu dai ranh (cung)", 40.0, "mm", 1.0),
-         ThamSo("rong", "Chieu rong ranh", 12.0, "mm", 0.5),
-         ThamSo("x", "Vi tri tam ranh", 100.0, "mm"),
-         ThamSo("a", "Goc dat ranh", 0.0, "do")],
-        lambda r, g: ranh_dai(r, g["dai"], g["rong"], g["x"], g["a"], doc_truc=False),
-        "ranh_vong"),
-
-    KieuMoiNoi(
-        "khia_v", "Khia chu V de uon",
-        "Khia mot ranh chu V roi bop lai de uon ong mot goc dinh truoc.",
-        [ThamSo("goc_uon", "Goc muon uon", 90.0, "do", 5.0, 150.0),
-         ThamSo("x", "Vi tri khia", 100.0, "mm"),
-         ThamSo("a", "Goc dat khia", 0.0, "do"),
-         ThamSo("phan", "Phan chu vi bi khia", 0.5, "", 0.1, 0.9)],
-        lambda r, g: khia_chu_v(r, g["goc_uon"], g["x"], g["a"], g["phan"]),
-        "khia_v"),
+         ThamSo("khe_ho", "Khe ho han", 0.0, "mm", 0.0, 10.0),
+         ThamSo("a", "Goc dat mieng cat", 0.0, "do")],
+        lambda r, g, x: _xoay(yen_ngua(r, g["d_chinh"] / 2.0, 90.0,
+                                       khe_ho=g["khe_ho"], x_goc=x), g.get("a", 0.0)),
+        "nhanh_t_90"),
 ]
 
 THEO_MA = {k.ma: k for k in THU_VIEN}
 
 
 # =============================================================================
-# SINH G-CODE TU DANH SACH PHEP CAT
+# XEP BAI - cat mot cay ong thanh nhieu khuc noi tiep
 # =============================================================================
+class KetQuaXep:
+    def __init__(self):
+        self.cac_duong = []     # [DuongCat, ...] cung thu tu voi cac muc
+        self.tong_dung = 0.0    # cho xa nhat cua bai tinh tu mam kep (mm)
+        self.canh_bao = []
+
+
+def xep_bai(duong_kinh_ong, cac_muc, dai_cay_ong=None):
+    """Sinh duong cat cho tung muc trong bai.
+
+    cac_muc: [{"ma": <ma kieu>, "gia_tri": {...}, "x": <vi tri tam nhat cat, mm>}, ...]
+
+    "x" la vi tri TAM cua nhat cat, do tu MAM KEP. Voi mat cat vat thi tam la
+    tam ong; voi long yen ngua thi la diem hai truc ong gap nhau. Do theo tam
+    chu khong theo mep vi mep dai va mep ngan khac nhau, con tam thi khong doi.
+    """
+    kq = KetQuaXep()
+    for i, muc in enumerate(cac_muc, 1):
+        kieu = THEO_MA.get(muc["ma"])
+        if kieu is None:
+            raise ValueError(f"Nhat cat {i}: khong biet kieu ghep {muc['ma']!r}")
+        try:
+            duong = kieu.sinh(duong_kinh_ong, muc["gia_tri"], float(muc.get("x", 0.0)))
+        except ValueError as loi:
+            raise ValueError(f"Nhat cat {i} ({kieu.ten}): {loi}") from loi
+        kq.cac_duong.append(duong)
+        # Cay ong bi chiem toi cho XA NHAT cua nhat cat, khong phai toi tam no
+        kq.tong_dung = max(kq.tong_dung, duong.pham_vi_x()[1])
+
+    if dai_cay_ong and kq.tong_dung > dai_cay_ong:
+        kq.canh_bao.append(
+            f"Bai can {kq.tong_dung:.1f} mm nhung cay ong chi dai {dai_cay_ong:g} mm "
+            f"- THIEU {kq.tong_dung - dai_cay_ong:.1f} mm.")
+    return kq
+
+
+def vi_tri_ke_tiep(duong_kinh_ong, cac_muc, ma_moi, gia_tri_moi, dai_khuc, khe,
+                   chua_dau=20.0):
+    """Tinh vi tri dat nhat cat MOI de no nam noi tiep sau cac nhat da co.
+
+    Khuc ong nam giua nhat cat truoc va nhat cat moi phai dai dung dai_khuc, con
+    khe la phan vat lieu mat di cho mach cat va cho kep.
+    """
+    if dai_khuc <= 0:
+        raise ValueError("Chieu dai khuc phai lon hon 0")
+    if khe < 0:
+        raise ValueError("Khoang cach giua cac nhat cat khong the am")
+    if not cac_muc:
+        return chua_dau + dai_khuc
+    truoc = xep_bai(duong_kinh_ong, cac_muc)
+    return truoc.tong_dung + khe + dai_khuc
+
+
+def khung_duong_cat(duong):
+    """Khung chu nhat bao quanh mot duong cat theo truc ong: (x_dau, x_cuoi, dai).
+
+    Trong the XEP 2D moi nhat cat duoc ve thanh mot hinh chu nhat dai bang be
+    ngang cua no theo truc X - nhin phat la biet no an het bao nhieu ong.
+    """
+    x1, x2 = duong.pham_vi_x()
+    return (x1, x2, x2 - x1)
+
+
 def sinh_gcode(cac_duong, toc_do_cat, toc_do_nhanh, thoi_gian_duc_lo=0.8,
                x_ve_cho=None, tieu_de=None):
     """Doi danh sach DuongCat thanh chuong trinh G-code hoan chinh.

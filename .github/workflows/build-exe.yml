@@ -44,6 +44,9 @@ jobs:
       - name: Kiem tra toan hoc cua thu vien moi noi
         run: python kiem_tra/test_thu_vien.py
 
+      - name: Kiem tra xep bai va do khoang cach
+        run: python kiem_tra/test_xep.py
+
       - name: Dong goi phan mem VAN HANH
         run: >
           python -m PyInstaller --onefile --windowed --noconfirm

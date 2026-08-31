@@ -11,10 +11,12 @@ xoay ong), dieu khien bang G-CODE CHUAN qua cong USB COM.
 | `may_cat_ong.pyw` | **Phan mem chinh** - thu vien moi noi, mo phong 3D, chay may |
 | `loi/thu_vien_moi_noi.py` | Toan hinh hoc sinh duong cat cho tung kieu ghep ong |
 | `loi/phan_tich_gcode.py` | Doc / kiem tra / chuan hoa / nen G-code |
-| `loi/ve_3d.py` | Ve ong trong mam kep va duong cat |
+| `loi/ve_3d.py` | Mo phong 3D: ong quay va truot, dau cat dung yen |
+| `loi/xep_2d.py` | The xep 2D: keo tha nhat cat doc cay ong, co thuoc do |
 | `loi/ket_noi.py` | Duong day toi ESP32: thuong luong baud, nap dan |
 | `cnc_settings.pyw` | Phan mem CAI DAT nang cao (chan GPIO, hieu chuan) |
 | `kiem_tra/test_thu_vien.py` | Kiem chung toan hoc cua thu vien moi noi |
+| `kiem_tra/test_xep.py` | Kiem chung phan xep bai va do khoang cach |
 | `build_exe.bat` | Dong goi phan mem thanh file `.exe` chay doc lap |
 
 ## 1. Nap firmware cho ESP32
@@ -62,13 +64,17 @@ Copy 2 file nay di dau cung chay duoc.
 +----------------------------------------------------------------------+
 | File | Parameters | Nesting | Diagnostics | Settings | Alarm          |
 +----------------------------------------------------------------------+
-| COM + toc do | CHE DO 1/2/3 | DUONG KINH ONG                          |
+| [Ket noi] | [Tham so...] | che do dang dung                        |
 +---------------+------------------------------------+-----------------+
-| Thu vien      |                                    | Vi tri may X/A  |
-| moi noi       |        Mo phong 3D                 +-----------------+
-| (8 kieu)      |     ong trong mam kep              | Tien do %       |
-+---------------+                                    +-----------------+
-| Dieu khien tay|                                    | Kich thuoc bai  |
+| Thu vien      | [Mo phong 3D] [Xep tren cay ong]   | Vi tri may X/A  |
+| moi noi       |                                    | (hoac vi tri    |
+| (3 kieu)      |   3D: ong quay + truot ra vao,     |  nhat cat o the |
+|               |       dau cat dung yen             |  xep)           |
++---------------+   2D: cay ong nam thang, keo tha   +-----------------+
+| Dieu khien tay|       tung nhat cat, co thuoc do   | Tien do %       |
+| + toc do tay  |                                    +-----------------+
+|               |                                    | Kich thuoc bai  |
+|               |                                    | + DUONG KINH ONG|
 +---------------+------------------------------------+-----------------+
 | Mo .NC | Ve goc | Chay thu | Bat mo | CHAY | TAM DUNG | TIEP | DUNG   |
 +----------------------------------------------------------------------+
@@ -76,8 +82,11 @@ Copy 2 file nay di dau cung chay duoc.
 +----------------------------------------------------------------------+
 ```
 
-**Che do va duong kinh ong nam ngay tren man hinh chinh** - doi ong la viec lam
-hang ngay, khong phai vao muc cai dat.
+**Cong COM, toc do truyen va che do may** nam trong mot hop thoai duy nhat, mo
+bang nut *Tham so...* tren thanh cong cu. Toc do truyen co dinh **115200 baud**.
+
+**Duong kinh ong** nam ngoai man hinh chinh, o khung *Kich thuoc bai* ben phai -
+doi ong la viec lam hang ngay nen khong bat vao hop thoai.
 
 ### Thu vien moi noi
 
@@ -86,18 +95,46 @@ cung duoc; thu tu sap xep lai duoc bang nut Len / Xuong.
 
 | Kieu | Dung de |
 |---|---|
-| Yen ngua chu T | Dau ong om vao than ong chinh, vuong goc |
-| Yen ngua goc nghieng | Nhu tren nhung o goc bat ky, co ca do lech tam |
-| Cat vat | Ghep co: hai ong cung vat nua goc co roi up vao nhau |
-| Cat thang | Cat dut ong thanh doan |
-| Lo tron | Khoan lo xuyen tam qua thanh ong |
-| Ranh dai doc truc / theo chieu vong | Ranh bo tron hai dau |
-| Khia chu V | Khia roi bop lai de uon ong mot goc dinh truoc |
+| Ghep goc 90 do | Noi hai ong thanh goc vuong o dau ong - moi dau vat 45 do |
+| Ghep goc 45 do | Noi hai ong thanh goc 45 do - moi dau vat 22,5 do |
+| Ong nhanh chu T 90 do | Dau ong cat long yen ngua de om vuong goc vao GIUA than ong chinh |
 
-Toan bo cong thuc deu la **hinh hoc chinh xac**, khong xap xi. Vi du lo tron:
-duong cat tren mat ong la giao tuyen cua hai hinh tru, khong phai duong tron
-phang - dung cong thuc xap xi thi lo D40 tren ong D60 bi **hep di 3,6 do**.
-Chay `python kiem_tra/test_thu_vien.py` de xem toan bo phan kiem chung.
+Ghep hai ong thanh mot goc thi **moi dau chi can vat nua goc do**, roi up hai
+mat vat vao nhau. Vi vay goc 90 do -> vat 45 do, goc 45 do -> vat 22,5 do.
+
+Moi lan Them, nhap **chieu dai khuc ong** - phan mem tu dat nhat cat noi tiep
+sau nhat truoc, cach nhau dung khoang khe da khai bao. Cat mot cay ong ra nhieu
+khuc chi la them nhieu lan.
+
+Toan bo cong thuc deu la **hinh hoc chinh xac**, khong xap xi.
+Chay `python kiem_tra/test_thu_vien.py` va `python kiem_tra/test_xep.py` de xem
+toan bo phan kiem chung.
+
+**Ve chuyen long yen ngua trong nhu co goc nhon:** khi ong nhanh va ong chinh
+BANG duong kinh nhau thi day yen dung la mot diem nhon that - cong thuc rut gon
+thanh `L = R*|cos(phi)|`, ma ham `|cos|` gap goc tai 90 do. Do la hinh hoc dung
+chu khong phai loi ve. Ong chinh cang to hon thi duong cat cang tron:
+
+| Ong nhanh | Ong chinh | Goc gap o suon yen |
+|---|---|---|
+| D60 | D60 | 90 do (nhon that) |
+| D60 | D70 | 3,8 do |
+| D60 | D90 | 2,0 do |
+| D60 | D200 | 0,7 do |
+
+### The XEP 2D
+
+Bam the *Xep tren cay ong* de nhin cay ong nam thang. Moi nhat cat la mot **hinh
+chu nhat dai bang be ngang cua duong cat theo truc ong**.
+
+- Keo hinh chu nhat de doi cho, lan chuot de phong to, **keo chuot giua** de day
+  khung nhin qua lai
+- **Diem goc** la dau ong xa mam kep nhat. Khoang cach cua mot nhat cat do tu
+  diem goc toi **canh gan diem goc nhat** cua hinh chu nhat do
+- Chon mot nhat cat thi o *Vi tri may* ben phai doi thanh o nhap khoang cach -
+  go so vao la nhat cat nhay dung cho. Ra khoi the nay thi o do tro lai binh thuong
+- **Ctrl+Z / Ctrl+Y** hoan tac va lam lai, **Ctrl+C / Ctrl+X / Ctrl+V** sao chep,
+  cat va dan nhat cat (dung duoc o ca bang Edit lan the xep)
 
 ### Ba the o duoi
 

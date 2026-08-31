@@ -2467,6 +2467,14 @@ static void xu_ly_lenh_tu_pc(char *dong)
         printf("Loi: dang o trang thai dung khan cap, khong nhan lenh moi.\n");
         return;
     }
+    // LENH DON LE LA THAO TAC MOI cua nguoi van hanh (bam "ve goc 0", go G0...)
+    // nen phai go co DUNG HAN con dong lai tu lan STOP truoc. Neu khong thi sau
+    // khi bam STOP, task dong co bo qua MOI buoc va lenh don le im lang khong
+    // chay - nhin nhu phan mem hong. JOG da lam viec nay tu truoc, con duong
+    // nay thi bi bo sot.
+    if (trang_thai_chay == YEU_CAU_DUNG_HAN) {
+        trang_thai_chay = CHAY_BINH_THUONG;
+    }
     // Dung bien mo phong = vi tri thuc de cac lenh don le cung tinh dung
     vi_tri_mo_phong_x = doc_vi_tri_keo_mm();
     vi_tri_mo_phong_y = doc_vi_tri_xoay_do();
