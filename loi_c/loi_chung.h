@@ -15,6 +15,10 @@
 
 #define CO_LOI 256        /* do dai bo dem thong bao loi */
 
+/* M_PI khong nam trong chuan C nen mot so trinh dich khong co - dinh nghia
+ * o day de ca phan mem dung chung mot hang so. */
+#define PI 3.14159265358979323846
+
 /* Mot diem tren duong cat: X doc truc ong (mm), A goc xoay ong (do) */
 typedef struct {
     double x;
