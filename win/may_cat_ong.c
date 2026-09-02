@@ -33,8 +33,11 @@
 
 #define TEN_PHAN_MEM "May cat ong plasma CNC"
 
-/* Duong COM luon chay 115200 - muc on dinh nhat voi moi chip USB-UART. */
-#define BAUD_CO_DINH 115200
+/* May chay firmware FluidNC. Cong USB luon 115200. */
+#define BAUD_CO_DINH BAUD_FLUIDNC
+
+/* Dia chi giao dien web cua FluidNC (doi chan GPIO, hieu chuan...) */
+#define DIA_CHI_WEBUI "http://fluidnc.local/"
 
 #define SO_MUC_TOI_DA   400
 #define SO_LICH_SU      60
@@ -54,16 +57,16 @@ enum {
     ID_O_KHOANG_CACH, ID_NUT_AP_KC,
     ID_TIEN_DO, ID_O_DUONG_KINH, ID_NUT_AP_DK,
     ID_NUT_MO_NC, ID_NUT_VE_GOC, ID_NUT_CHAY_THU, ID_NUT_BAT_MO,
-    ID_NUT_CHAY, ID_NUT_TAM_DUNG, ID_NUT_CHAY_TIEP, ID_NUT_DUNG,
+    ID_NUT_MO_KHOA, ID_NUT_CHAY, ID_NUT_TAM_DUNG, ID_NUT_CHAY_TIEP, ID_NUT_DUNG,
     ID_THE_DUOI, ID_BANG_BAI, ID_O_GCODE, ID_NUT_NAP_LAI,
     ID_NUT_LEN, ID_NUT_XUONG, ID_NUT_XOA, ID_NUT_XOA_HET,
     ID_TERM, ID_O_LENH, ID_NUT_GUI_LENH, ID_NUT_XOA_TERM,
     ID_BANG_LOI,
     ID_MENU_MO = 400, ID_MENU_LUU, ID_MENU_THOAT,
-    ID_MENU_THAM_SO, ID_MENU_TOC_DO, ID_MENU_DUC_LO,
+    ID_MENU_THAM_SO, ID_MENU_TOC_DO, ID_MENU_DUC_LO, ID_MENU_XUNG_A,
     ID_MENU_XEP_LAI, ID_MENU_KIEM_CAY,
-    ID_MENU_POS, ID_MENU_BUF, ID_MENU_CFG, ID_MENU_REBOOT,
-    ID_MENU_TAY, ID_MENU_CAI_DAT,
+    ID_MENU_POS, ID_MENU_MO_KHOA, ID_MENU_VE_GOC_MAY, ID_MENU_REBOOT,
+    ID_MENU_TAY, ID_MENU_WEBUI,
     ID_MENU_XEM_LOI, ID_MENU_XOA_LOI
 };
 
@@ -72,7 +75,7 @@ enum {
 #define WM_NHAT_KY  (WM_APP + 2)
 #define WM_LOI_NAP  (WM_APP + 3)
 #define WM_VI_TRI   (WM_APP + 4)    /* lParam = double[2]* (tu giai phong) */
-#define WM_BAUD     (WM_APP + 5)
+#define WM_TRANG_THAI (WM_APP + 5)  /* wParam = TrangThaiMay */
 
 /* --- Trang thai may --- */
 typedef enum {
@@ -90,11 +93,14 @@ static const struct { const char *chu; COLORREF mau; } BANG_TRANG_THAI[] = {
     { "DA DUNG",      RGB(0x49, 0x50, 0x57) }
 };
 
+/* File .NC lay tu phan mem CAM co the ghi truc A bang DO hoac bang MM CUNG
+ * (kieu "trai phang"). Phan mem can biet de ve hinh cho dung, va de doi sang
+ * mm cung truoc khi gui xuong may. Bai lam tu thu vien moi noi luon la DO. */
 static const char *TEN_CHE_DO[4] = {
     "",
-    "Mode 1 - X tinh bang mm, A tinh bang do",
-    "Mode 2 - nhap duong kinh, giu toc do mo cat khong doi",
-    "Mode 3 - nhap duong kinh, ca hai truc tinh bang mm"
+    "File .NC: truc A ghi bang DO",
+    "File .NC: truc A ghi bang DO (giu deu toc do mo cat)",
+    "File .NC: truc A ghi bang MM CUNG (trai phang)"
 };
 
 #define BO_LOC_FILE \
@@ -129,6 +135,7 @@ typedef struct {
     int    che_do;
     double duong_kinh, dai_cay_ong, toc_do_cat, toc_do_nhanh;
     double toc_do_tay, buoc_nhich, thoi_gian_duc_lo;
+    double xung_moi_vong_a;     /* so xung mot vong cua dong co truc xoay */
     double dai_khuc, khe_cat, chua_dau;
     int    chay_thu;
 
@@ -164,10 +171,10 @@ typedef struct {
     HWND o_dai_cay, o_khe_cat, o_khoang_cach, o_duong_kinh;
     HWND tien_do;
     HWND nut_chay_thu, nut_bat_mo;
-    HWND nut_chay, nut_tam_dung, nut_chay_tiep, nut_dung, nut_ve_goc;
+    HWND nut_chay, nut_tam_dung, nut_chay_tiep, nut_dung, nut_ve_goc, nut_mo_khoa;
     HWND the_duoi, bang_bai, o_gcode, term, o_lenh, bang_loi;
     HWND nut_thu_vien[8], nut_tay[8], nut_the3d[8], nut_the2d[8], nut_bang[8];
-    HWND nut_hang[8];
+    HWND nut_hang[9];
 
     /* Vung ve tu ve tay trong WM_PAINT */
     RECT vung_trai, vung_phai;
@@ -1069,6 +1076,11 @@ static void tu_luong_dong(void *ctx, const char *dong)
     (void)ctx;
     PostMessageA(g.chinh, WM_ESP32, 0, (LPARAM)_strdup(dong));
 }
+static void tu_luong_trang_thai(void *ctx, TrangThaiMay tt)
+{
+    (void)ctx;
+    PostMessageA(g.chinh, WM_TRANG_THAI, (WPARAM)tt, 0);
+}
 static void tu_luong_nhat_ky(void *ctx, const char *chu)
 {
     (void)ctx;
@@ -1087,12 +1099,6 @@ static void tu_luong_vi_tri(void *ctx, double x, double a)
     d[0] = x; d[1] = a;
     PostMessageA(g.chinh, WM_VI_TRI, 0, (LPARAM)d);
 }
-static void tu_luong_baud(void *ctx, int baud)
-{
-    (void)ctx;
-    PostMessageA(g.chinh, WM_BAUD, (WPARAM)baud, 0);
-}
-
 static int dang_ket_noi(void) { return ket_noi_dang_mo(g.may); }
 
 static void cap_nhat_nhan_cong(void)
@@ -1108,7 +1114,7 @@ static void ket_noi_may(void)
                  "Chua chon cong COM.\n\nBam 'Tham so...' de chon.");
         return;
     }
-    if (ket_noi_mo(g.may, g.cong_com, BAUD_CO_DINH, loi) != 0) {
+    if (ket_noi_mo(g.may, g.cong_com, loi) != 0) {
         bao_loi(g.chinh, "Loi ket noi", "%s", loi);
         them_loi(loi);
         return;
@@ -1116,7 +1122,9 @@ static void ket_noi_may(void)
     SetWindowTextA(g.nut_ket_noi, "Ngat ket noi");
     dat_trang_thai(TT_SAN_SANG);
     cap_nhat_nhan_cong();
-    ghi("he_thong", "Da ket noi %s o %d baud", g.cong_com, BAUD_CO_DINH);
+    ghi("he_thong", "Da ket noi %s o %d baud (FluidNC)", g.cong_com, BAUD_CO_DINH);
+    /* Bao ngay duong kinh ong de truc xoay tinh dung so xung tren mm cung */
+    ket_noi_dat_duong_kinh(g.may, g.duong_kinh, g.xung_moi_vong_a);
 }
 
 static void ngat_ket_noi(void)
@@ -1149,7 +1157,6 @@ static int gui_lenh_im(const char *lenh)   /* khong ghi vao nhat ky */
 /* ====================================================================== */
 static void jog(const char *truc, int dau)
 {
-    char lenh[64];
     double buoc, toc_do;
     if (lay_so(g.o_buoc_nhich, &buoc) != 0 || lay_so(g.o_toc_do_tay, &toc_do) != 0) {
         canh_bao(g.chinh, "Sai so lieu", "Buoc nhich va toc do tay phai la so.");
@@ -1163,15 +1170,24 @@ static void jog(const char *truc, int dau)
     }
     g.buoc_nhich = buoc < 0 ? -buoc : buoc;
     g.toc_do_tay = toc_do;
-    snprintf(lenh, sizeof(lenh), "JOG;%s;%g;%g", truc, buoc, toc_do);
-    gui_lenh(lenh);
+    if (!dang_ket_noi()) {
+        canh_bao(g.chinh, "Chua ket noi", "Hay ket noi cong COM truoc.");
+        return;
+    }
+    ket_noi_jog(g.may, truc[0], buoc, toc_do);
 }
 
 static void dat_goc(void)
 {
+    if (!dang_ket_noi()) {
+        canh_bao(g.chinh, "Chua ket noi", "Hay ket noi cong COM truoc.");
+        return;
+    }
     if (hoi_co_khong(g.chinh, "Dat goc 0",
-                     "Lay vi tri hien tai lam goc 0 cua ca hai truc?"))
-        gui_lenh("ZERO");
+                     "Lay vi tri hien tai lam goc 0 cua ca hai truc?")) {
+        ket_noi_dat_goc(g.may);
+        ghi("gui", "> dat goc 0 tai cho dang dung");
+    }
 }
 
 /* Dua ca hai truc ve diem goc 0 - hai truc chay dong thoi. */
@@ -1185,6 +1201,17 @@ static void ve_goc(void)
     gui_lenh("G90");        /* bat toa do tuyet doi cho chac */
     snprintf(lenh, sizeof(lenh), "G0 X0 A0 F%g", g.toc_do_nhanh);
     gui_lenh(lenh);
+}
+
+/* Go trang thai bao dong (sau khi bam EMG hoac cham cong tac hanh trinh). */
+static void mo_khoa(void)
+{
+    if (!dang_ket_noi()) {
+        canh_bao(g.chinh, "Chua ket noi", "Hay ket noi cong COM truoc.");
+        return;
+    }
+    ket_noi_mo_khoa(g.may);
+    ghi("gui", "> $X (go bao dong)");
 }
 
 static void bat_tat_chay_thu(void)
@@ -1236,7 +1263,14 @@ static void chay_bai(void)
 
     for (i = 0; i < g.ket_qua.so_dong && n < SO_DONG_TOI_DA; i++) {
         const char *d = g.ket_qua.dong_chuan_hoa[i];
+        char doi[CO_DONG_G];
         if (g.chay_thu && (strcmp(d, "M3") == 0 || strcmp(d, "M4") == 0)) continue;
+        /* FluidNC lam viec bang MM CUNG o truc xoay. Bai lam tu thu vien va
+         * file .NC ghi bang do (che do 1, 2) thi phai doi; file da o dang trai
+         * phang (che do 3) thi gui thang. */
+        if (g.che_do != 3 &&
+            doi_a_sang_mm_cung(d, g.duong_kinh, doi, sizeof(doi)) == 0)
+            d = doi;
         if (nen_dong_gui(d, nen[n], CO_DONG_G) > 0) { tro[n] = nen[n]; n++; }
     }
     if (n == 0) {
@@ -1244,6 +1278,10 @@ static void chay_bai(void)
         return;
     }
     if (g.chay_thu) ghi("he_thong", "CHAY THU: da bo cac lenh bat mo cat.");
+    if (g.che_do != 3)
+        ghi("he_thong", "Truc xoay doi tu do sang mm cung theo ong D%g "
+                        "truoc khi gui (FluidNC tinh toc do theo mm).",
+            g.duong_kinh);
 
     g.doan_da_chay = 0;
     g.moc_bat_dau = gio_may();
@@ -1254,16 +1292,18 @@ static void chay_bai(void)
 
 static void dung_may(void)
 {
-    ket_noi_huy_nap(g.may);
     if (dang_ket_noi()) {
-        ket_noi_gui(g.may, "STOP");
-        ghi("gui", "> STOP");
+        ket_noi_dung_han(g.may);
+        ghi("gui", "> dung han");
+    } else {
+        ket_noi_huy_nap(g.may);
     }
     g.mo_dang_bat = 0;
     SetWindowTextA(g.nut_bat_mo, "Bat mo");
     InvalidateRect(g.nut_bat_mo, NULL, TRUE);
 }
 
+/* ====================================================================== */
 /* ====================================================================== */
 /* FILE                                                                   */
 /* ====================================================================== */
@@ -1316,36 +1356,22 @@ static void luu_file_gcode(void)
     ghi("he_thong", "Da luu %s", duong);
 }
 
+/* ====================================================================== */
+/* FILE                                                                   */
+/* ====================================================================== */
+/* FluidNC co san giao dien web de doi chan GPIO, hieu chuan, xem cau hinh.
+ * Mo trinh duyet toi dia chi cua may. */
 static void mo_cai_dat_nang_cao(void)
 {
-    char duong[MAX_PATH], *cat;
-    STARTUPINFOA si;
-    PROCESS_INFORMATION pi;
-    GetModuleFileNameA(NULL, duong, sizeof(duong));
-    cat = strrchr(duong, '\\');
-    if (cat) cat[1] = '\0'; else duong[0] = '\0';
-    strncat(duong, "cnc_settings.exe", sizeof(duong) - strlen(duong) - 1);
-    if (GetFileAttributesA(duong) == INVALID_FILE_ATTRIBUTES) {
-        canh_bao(g.chinh, "Khong tim thay",
-                 "Khong thay cnc_settings.exe canh phan mem nay.");
+    if (!hoi_co_khong(g.chinh, "Cai dat phan cung",
+                      "Cai dat phan cung (chan GPIO, so xung moi vong, dao chieu "
+                      "truc...) nay nam trong giao dien web cua chinh may.\n\n"
+                      "Mo trinh duyet toi %s?\n\n"
+                      "Neu khong vao duoc bang ten do, hay go thang dia chi IP "
+                      "cua may (xem trong tab System luc may vua khoi dong).",
+                      DIA_CHI_WEBUI))
         return;
-    }
-    if (dang_ket_noi()) {
-        if (!hoi_co_khong(g.chinh, "Dang ket noi",
-                          "Chi mot phan mem duoc giu cong COM cung luc.\n\n"
-                          "Ngat ket noi de mo phan cai dat nang cao?"))
-            return;
-        ngat_ket_noi();
-    }
-    memset(&si, 0, sizeof(si));
-    si.cb = sizeof(si);
-    memset(&pi, 0, sizeof(pi));
-    if (!CreateProcessA(duong, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-        bao_loi(g.chinh, "Khong mo duoc", "Khong chay duoc %s", duong);
-        return;
-    }
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
+    ShellExecuteA(g.chinh, "open", DIA_CHI_WEBUI, NULL, NULL, SW_SHOWNORMAL);
 }
 
 /* ====================================================================== */
@@ -1457,15 +1483,6 @@ static void lenh_hop_tham_so(HWND h, int ma, void *rieng)
 
     GetWindowTextA(r->o_cong, g.cong_com, sizeof(g.cong_com));
     g.che_do = r->che_do;
-    if (dang_ket_noi()) {
-        char lenh[64];
-        snprintf(lenh, sizeof(lenh), "CFG;MODE;%d", g.che_do);
-        gui_lenh(lenh);
-        if (g.che_do == 2 || g.che_do == 3) {
-            snprintf(lenh, sizeof(lenh), "CFG;DUONGKINH;%g", g.duong_kinh);
-            gui_lenh(lenh);
-        }
-    }
     t->ket_qua = 1;
     t->dang_mo = 0;
 }
@@ -1484,7 +1501,7 @@ static void hop_tham_so(void)
     t.rieng = &r;
     t.khi_lenh = lenh_hop_tham_so;
 
-    h = hop_tao("Tham so may", 470, 320, &t);
+    h = hop_tao("Tham so may", 470, 340, &t);
     if (!h) return;
 
     /* Win32 khong co bo tri tu dong: tao roi dat cho tung o */
@@ -1519,8 +1536,8 @@ static void hop_tham_so(void)
         SendMessageA(b, WM_SETFONT, (WPARAM)PC_THUONG, TRUE);
     }
     {
-        HWND a = CreateWindowExA(0, "STATIC", "Che do lam viec:",
-                                 WS_CHILD | WS_VISIBLE, 12, 82, 200, 18,
+        HWND a = CreateWindowExA(0, "STATIC", "File .NC nhap vao ghi truc A bang gi:",
+                                 WS_CHILD | WS_VISIBLE, 12, 82, 320, 18,
                                  h, NULL, g.hinst, NULL);
         SendMessageA(a, WM_SETFONT, (WPARAM)PC_DAM, TRUE);
     }
@@ -1537,21 +1554,24 @@ static void hop_tham_so(void)
     }
     {
         HWND a = CreateWindowExA(0, "STATIC",
-                                 "Mode 2 va 3 can duong kinh ong - nhap o khung "
-                                 "\"Kich thuoc bai\" ben phai man hinh chinh.\r\n"
+                                 "Muc nay chi noi ve FILE .NC lay tu phan mem CAM: "
+                                 "truc A trong file ghi bang do hay bang mm cung.\r\n"
+                                 "Bai lam tu thu vien moi noi luon la do. Du chon "
+                                 "kieu nao, phan mem cung tu doi sang mm cung "
+                                 "truoc khi gui xuong may.\r\n"
                                  "Doi cong COM chi co hieu luc o lan ket noi sau.",
-                                 WS_CHILD | WS_VISIBLE, 12, 188, 440, 44,
+                                 WS_CHILD | WS_VISIBLE, 12, 182, 440, 60,
                                  h, NULL, g.hinst, NULL);
         SendMessageA(a, WM_SETFONT, (WPARAM)PC_NHO, TRUE);
     }
     nut = CreateWindowExA(0, "BUTTON", "Xong",
                           WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                          140, 244, 90, 28, h,
+                          140, 262, 90, 28, h,
                           (HMENU)(INT_PTR)ID_HOP_XONG, g.hinst, NULL);
     SendMessageA(nut, WM_SETFONT, (WPARAM)PC_THUONG, TRUE);
     nut = CreateWindowExA(0, "BUTTON", "Bo qua",
                           WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                          240, 244, 90, 28, h,
+                          240, 262, 90, 28, h,
                           (HMENU)(INT_PTR)ID_HOP_BO_QUA, g.hinst, NULL);
     SendMessageA(nut, WM_SETFONT, (WPARAM)PC_THUONG, TRUE);
 
@@ -1658,6 +1678,19 @@ static void hop_duc_lo(void)
     if (hop_nhap("Duc lo", nhan, bien, don_vi, 1)) sinh_gcode_bai();
 }
 
+/* So xung mot vong cua dong co truc xoay. Can so nay de tinh ra so xung tren
+ * mot mm cung khi doi duong kinh ong:
+ *     xung_moi_mm = xung_moi_vong / (pi * duong_kinh) */
+static void hop_xung_truc_xoay(void)
+{
+    const char *nhan[1] = { "So xung mot vong cua dong co truc xoay" };
+    const char *don_vi[1] = { "xung" };
+    double *bien[1];
+    bien[0] = &g.xung_moi_vong_a;
+    if (hop_nhap("Truc xoay", nhan, bien, don_vi, 1))
+        ket_noi_dat_duong_kinh(g.may, g.duong_kinh, g.xung_moi_vong_a);
+}
+
 static void hop_dieu_khien_tay(void)
 {
     const char *nhan[2] = { "Toc do di chuyen tay", "Buoc nhich moi lan bam" };
@@ -1690,7 +1723,6 @@ static void lenh_hop_chay_tiep(HWND h, int ma, void *rieng)
     if (ma != ID_HOP_XONG) return;
     if (co_duc) {
         double giay;
-        char lenh[48];
         if (lay_so(r->o_thoi_gian, &giay) != 0) {
             canh_bao(h, "Sai so lieu", "Thoi gian duc lo phai la so.");
             return;
@@ -1701,12 +1733,11 @@ static void lenh_hop_chay_tiep(HWND h, int ma, void *rieng)
             return;
         }
         t->dang_mo = 0;
-        snprintf(lenh, sizeof(lenh), "RESUME;%d", (int)(giay * 1000));
-        gui_lenh(lenh);
+        ket_noi_chay_tiep(g.may, (int)(giay * 1000));
         ghi("he_thong", "Chay tiep, duc lo %g giay truoc.", giay);
     } else {
         t->dang_mo = 0;
-        gui_lenh("RESUME");
+        ket_noi_chay_tiep(g.may, 0);
         ghi("he_thong", "Chay tiep, KHONG duc lo lai.");
     }
     t->ket_qua = 1;
@@ -1925,6 +1956,7 @@ static void tao_menu(HWND h)
     AppendMenuA(m, MF_SEPARATOR, 0, NULL);
     AppendMenuA(m, MF_STRING, ID_MENU_TOC_DO, "Toc do cat va toc do khong tai...");
     AppendMenuA(m, MF_STRING, ID_MENU_DUC_LO, "Thoi gian duc lo...");
+    AppendMenuA(m, MF_STRING, ID_MENU_XUNG_A, "So xung moi vong truc xoay...");
     AppendMenuA(thanh, MF_POPUP, (UINT_PTR)m, "Parameters");
 
     m = CreatePopupMenu();
@@ -1934,17 +1966,17 @@ static void tao_menu(HWND h)
 
     m = CreatePopupMenu();
     AppendMenuA(m, MF_STRING, ID_MENU_POS, "Hoi vi tri hien tai");
-    AppendMenuA(m, MF_STRING, ID_MENU_BUF, "Hoi bo dem con trong");
-    AppendMenuA(m, MF_STRING, ID_MENU_CFG, "Doc cau hinh ESP32");
+    AppendMenuA(m, MF_STRING, ID_MENU_MO_KHOA, "Go bao dong ($X)");
+    AppendMenuA(m, MF_STRING, ID_MENU_VE_GOC_MAY, "Chay ve cong tac goc ($H)");
     AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-    AppendMenuA(m, MF_STRING, ID_MENU_REBOOT, "Khoi dong lai ESP32");
+    AppendMenuA(m, MF_STRING, ID_MENU_REBOOT, "Khoi dong lai bo dieu khien");
     AppendMenuA(thanh, MF_POPUP, (UINT_PTR)m, "Diagnostics");
 
     m = CreatePopupMenu();
     AppendMenuA(m, MF_STRING, ID_MENU_TAY, "Buoc nhich va toc do tay...");
     AppendMenuA(m, MF_SEPARATOR, 0, NULL);
-    AppendMenuA(m, MF_STRING, ID_MENU_CAI_DAT,
-                "Cai dat phan cung (chan GPIO, hieu chuan)...");
+    AppendMenuA(m, MF_STRING, ID_MENU_WEBUI,
+                "Cai dat phan cung - mo giao dien web cua may...");
     AppendMenuA(thanh, MF_POPUP, (UINT_PTR)m, "Settings");
 
     m = CreatePopupMenu();
@@ -2007,8 +2039,8 @@ static void tao_o_dieu_khien(HWND h)
     static const char *cot_loi[]   = { "Thoi diem", "Noi dung" };
     static const int  rong_loi[]   = { 90, 880 };
     static const char *ten_tay[4]  = { "X-", "X+", "A nguoc", "A thuan" };
-    static const char *ten_hang[8] = { "Mo .NC", "Ve goc 0", "Chay thu", "Bat mo",
-                                       "CHAY", "TAM DUNG", "CHAY TIEP",
+    static const char *ten_hang[9] = { "Mo .NC", "Ve goc 0", "Chay thu", "Bat mo",
+                                       "Mo khoa", "CHAY", "TAM DUNG", "CHAY TIEP",
                                        "DUNG (Esc)" };
     int i;
 
@@ -2071,16 +2103,17 @@ static void tao_o_dieu_khien(HWND h)
     g.nut_thu_vien[2] = tao_nut(h, "Ap dung duong kinh", ID_NUT_AP_DK);
 
     /* ---- Hang nut lon ---- */
-    for (i = 0; i < 8; i++)
+    for (i = 0; i < 9; i++)
         g.nut_hang[i] = tao_nut(h, ten_hang[i], ID_NUT_MO_NC + i);
-    g.nut_ve_goc   = g.nut_hang[1];
-    g.nut_chay_thu = g.nut_hang[2];
-    g.nut_bat_mo   = g.nut_hang[3];
-    g.nut_chay     = g.nut_hang[4];
-    g.nut_tam_dung = g.nut_hang[5];
-    g.nut_chay_tiep = g.nut_hang[6];
-    g.nut_dung     = g.nut_hang[7];
-    for (i = 4; i < 8; i++)
+    g.nut_ve_goc    = g.nut_hang[1];
+    g.nut_chay_thu  = g.nut_hang[2];
+    g.nut_bat_mo    = g.nut_hang[3];
+    g.nut_mo_khoa   = g.nut_hang[4];
+    g.nut_chay      = g.nut_hang[5];
+    g.nut_tam_dung  = g.nut_hang[6];
+    g.nut_chay_tiep = g.nut_hang[7];
+    g.nut_dung      = g.nut_hang[8];
+    for (i = 5; i < 9; i++)
         SendMessageA(g.nut_hang[i], WM_SETFONT, (WPARAM)PC_DAM, TRUE);
 
     /* ---- The duoi ---- */
@@ -2243,8 +2276,8 @@ static void bo_tri(void)
 
     /* ---------------- Hang nut lon ---------------- */
     {
-        int rong_nut = (rong - X_LE * 2 - 7 * 4) / 8;
-        for (i = 0; i < 8; i++)
+        int rong_nut = (rong - X_LE * 2 - 8 * 4) / 9;
+        for (i = 0; i < 9; i++)
             dat_cho(g.nut_hang[i], X_LE + i * (rong_nut + 4), y_hang_nut,
                     rong_nut, CAO_HANG_NUT);
     }
@@ -2540,9 +2573,16 @@ static void dat_trang_thai(TrangThai tt)
     InvalidateRect(g.chinh, NULL, FALSE);
 }
 
+/* FluidNC tra "ok" cho tung dong nhan duoc, nen tien do do bang SO DONG da
+ * duoc bao nhan chia cho tong so dong cua bai. */
 static void cap_nhat_tien_do(void)
 {
-    int pt;
+    int pt, tong_dong = ket_noi_so_dong_ca_bai(g.may);
+    if (tong_dong > 0 && g.tong_doan > 0) {
+        double ti = (double)ket_noi_so_dong_da_nhan(g.may) / tong_dong;
+        if (ti > 1.0) ti = 1.0;
+        g.doan_da_chay = (int)(ti * g.tong_doan);
+    }
     if (g.tong_doan <= 0) return;
     pt = (int)(100.0 * g.doan_da_chay / g.tong_doan);
     if (pt > 100) pt = 100;
@@ -2562,75 +2602,54 @@ static void xong_bai(void)
     SetWindowTextA(g.nut_bat_mo, "Bat mo");
 }
 
-static void doc_cau_hinh(const char *dong)
+/* Doi trang thai may (FluidNC bao qua ban tin "?") sang trang thai hien tren
+ * thanh duoi cua so. */
+static TrangThai doi_trang_thai(TrangThaiMay tt)
 {
-    const char *p = dong + 4;
-    while (*p) {
-        char ten[32];
-        int n = 0;
-        while (*p == ' ') p++;
-        while (*p && *p != '=' && *p != ' ' && n < (int)sizeof(ten) - 1)
-            ten[n++] = *p++;
-        ten[n] = '\0';
-        if (*p != '=') { while (*p && *p != ' ') p++; continue; }
-        p++;
-        if (strcmp(ten, "che_do") == 0) {
-            int m = atoi(p);
-            if (m >= 1 && m <= 3) g.che_do = m;
-        } else if (strcmp(ten, "duong_kinh_ong") == 0) {
-            double d = atof(p);
-            if (d > 0) {
-                g.duong_kinh = d;
-                dat_chu_so(g.o_duong_kinh, d);
-            }
-        }
-        while (*p && *p != ' ') p++;
+    switch (tt) {
+    case MAY_IDLE:  return TT_SAN_SANG;
+    case MAY_RUN:   return TT_DANG_CHAY;
+    case MAY_JOG:   return TT_DANG_CHAY;
+    case MAY_HOME:  return TT_DANG_CHAY;
+    case MAY_HOLD:  return TT_TAM_DUNG;
+    case MAY_ALARM: return TT_LOI;
+    case MAY_DOOR:  return TT_LOI;
+    case MAY_SLEEP: return TT_DA_DUNG;
+    default:        return TT_SAN_SANG;
     }
-    InvalidateRect(g.chinh, NULL, TRUE);
 }
 
-static void tu_esp32(const char *dong)
+static void tu_may(const char *dong)
 {
     const char *the = NULL;
-    if (strncmp(dong, "Loi:", 4) == 0 || strncmp(dong, "LOI_", 4) == 0) {
-        the = "loi";
+
+    if (strncmp(dong, "error:", 6) == 0) {
+        int ma = atoi(dong + 6);
+        char chu[CO_LOI];
+        snprintf(chu, sizeof(chu), "%s (%s)", dong, giai_thich_loi(ma));
+        them_loi(chu);
+        ghi("loi", "%s", chu);
+        return;
+    }
+    if (strncmp(dong, "ALARM:", 6) == 0) {
+        int ma = atoi(dong + 6);
+        char chu[CO_LOI];
+        snprintf(chu, sizeof(chu), "%s - %s. Bam 'Mo khoa' de go bao dong.",
+                 dong, giai_thich_bao_dong(ma));
+        them_loi(chu);
+        ghi("loi", "%s", chu);
+        dat_trang_thai(TT_LOI);
+        return;
+    }
+    if (strncmp(dong, "[MSG:ERR", 8) == 0) {
         them_loi(dong);
-    } else if (strncmp(dong, "OK", 2) == 0 || strncmp(dong, "RUNNING", 7) == 0 ||
-               strncmp(dong, "ZEROED", 6) == 0 || strncmp(dong, "RESUMED", 7) == 0 ||
-               strncmp(dong, "Hoan thanh", 10) == 0 ||
-               strncmp(dong, "PLASMA_", 7) == 0 || strncmp(dong, "XONG_", 5) == 0 ||
-               strncmp(dong, "DUC_LO", 6) == 0) {
-        the = "ok";
+        the = "loi";
+    } else if (strncmp(dong, "[MSG:", 5) == 0 || strncmp(dong, "Grbl", 4) == 0) {
+        the = "he_thong";
+    } else if (strcmp(dong, "ok") == 0) {
+        return;                     /* khong lam ngap khung nhat ky */
     }
     ghi(the, "%s", dong);
-
-    if (strncmp(dong, "Loi: DUNG KHAN CAP", 18) == 0) {
-        dat_trang_thai(TT_LOI);
-    } else if (strncmp(dong, "RUNNING", 7) == 0 || strncmp(dong, "RESUMED", 7) == 0) {
-        dat_trang_thai(TT_DANG_CHAY);
-    } else if (strncmp(dong, "PAUSED", 6) == 0 || strncmp(dong, "M0_PAUSED", 9) == 0) {
-        dat_trang_thai(TT_TAM_DUNG);
-    } else if (strncmp(dong, "STOPPED", 7) == 0 ||
-               strncmp(dong, "Da dung han", 11) == 0) {
-        dat_trang_thai(TT_DA_DUNG);
-    } else if (strncmp(dong, "XONG_CHUONG_TRINH", 17) == 0) {
-        dat_trang_thai(TT_SAN_SANG);
-        xong_bai();
-    } else if (strncmp(dong, "He thong: da het dieu kien loi", 30) == 0) {
-        dat_trang_thai(TT_SAN_SANG);
-    } else if (strncmp(dong, "PLASMA_ON", 9) == 0) {
-        g.mo_dang_bat = 1;
-        SetWindowTextA(g.nut_bat_mo, "TAT mo");
-    } else if (strncmp(dong, "PLASMA_OFF", 10) == 0) {
-        g.mo_dang_bat = 0;
-        SetWindowTextA(g.nut_bat_mo, "Bat mo");
-    }
-
-    if (strncmp(dong, "Hoan thanh", 10) == 0) {
-        g.doan_da_chay++;
-        cap_nhat_tien_do();
-    }
-    if (strncmp(dong, "CFG:", 4) == 0) doc_cau_hinh(dong);
 }
 
 /* ====================================================================== */
@@ -2648,11 +2667,8 @@ static void ap_duong_kinh(void)
         return;
     }
     g.duong_kinh = d;
-    if (dang_ket_noi()) {
-        char lenh[64];
-        snprintf(lenh, sizeof(lenh), "CFG;DUONGKINH;%g", d);
-        gui_lenh(lenh);
-    }
+    /* Truc xoay tinh bang mm cung nen so xung tren mot mm doi theo duong kinh */
+    ket_noi_dat_duong_kinh(g.may, d, g.xung_moi_vong_a);
     bai_da_doi();
 }
 
@@ -2684,8 +2700,9 @@ static void xu_ly_lenh(int ma, int bao)
     case ID_NUT_THAM_SO: case ID_MENU_THAM_SO: hop_tham_so(); break;
     case ID_MENU_TOC_DO: hop_toc_do(); break;
     case ID_MENU_DUC_LO: hop_duc_lo(); break;
+    case ID_MENU_XUNG_A: hop_xung_truc_xoay(); break;
     case ID_MENU_TAY:    hop_dieu_khien_tay(); break;
-    case ID_MENU_CAI_DAT: mo_cai_dat_nang_cao(); break;
+    case ID_MENU_WEBUI: mo_cai_dat_nang_cao(); break;
     case ID_NUT_THEM:    them_nhat_cat(); break;
     case ID_JOG_X_TRU:   jog("X", -1); break;
     case ID_JOG_X_CONG:  jog("X", +1); break;
@@ -2710,7 +2727,18 @@ static void xu_ly_lenh(int ma, int bao)
     case ID_NUT_CHAY_THU: bat_tat_chay_thu(); break;
     case ID_NUT_BAT_MO:  bat_tat_mo(); break;
     case ID_NUT_CHAY:    chay_bai(); break;
-    case ID_NUT_TAM_DUNG: gui_lenh("PAUSE"); break;
+    case ID_NUT_TAM_DUNG:
+        if (dang_ket_noi()) { ket_noi_tam_dung(g.may); ghi("gui", "> tam dung"); }
+        else canh_bao(g.chinh, "Chua ket noi", "Hay ket noi cong COM truoc.");
+        break;
+    case ID_NUT_MO_KHOA: case ID_MENU_MO_KHOA: mo_khoa(); break;
+    case ID_MENU_VE_GOC_MAY:
+        if (dang_ket_noi() &&
+            hoi_co_khong(g.chinh, "Chay ve cong tac goc",
+                         "Cho may tu chay ve cong tac hanh trinh de lay lai goc "
+                         "may?\n\nOng phai duoc thao ra khoi vung cat truoc."))
+            ket_noi_ve_goc(g.may);
+        break;
     case ID_NUT_CHAY_TIEP: hop_chay_tiep(); break;
     case ID_NUT_DUNG:    dung_may(); break;
     case ID_NUT_LEN:     doi_cho_nhat_cat(-1); break;
@@ -2720,12 +2748,11 @@ static void xu_ly_lenh(int ma, int bao)
     case ID_NUT_NAP_LAI: ve_lai_bai(); break;
     case ID_NUT_GUI_LENH: gui_lenh_go(); break;
     case ID_NUT_XOA_TERM: xoa_terminal(); break;
-    case ID_MENU_POS:    gui_lenh("POS"); break;
-    case ID_MENU_BUF:    gui_lenh("BUF"); break;
-    case ID_MENU_CFG:    gui_lenh("CFG;GET"); break;
+    case ID_MENU_POS:    gui_lenh_im("?"); break;
     case ID_MENU_REBOOT:
-        if (hoi_co_khong(g.chinh, "Khoi dong lai", "Khoi dong lai ESP32?"))
-            gui_lenh("CFG;REBOOT");
+        if (hoi_co_khong(g.chinh, "Khoi dong lai",
+                         "Khoi dong lai bo dieu khien?"))
+            dung_may();
         break;
     case ID_MENU_XEM_LOI:
         SendMessageA(g.the_duoi, TCM_SETCURSEL, 2, 0);
@@ -2832,7 +2859,7 @@ static LRESULT CALLBACK thu_tuc_chinh(HWND h, UINT tin, WPARAM w, LPARAM l)
 
     /* ---- Ban tin tu luong nen ---- */
     case WM_ESP32:
-        if (l) { tu_esp32((const char *)l); free((void *)l); }
+        if (l) { tu_may((const char *)l); free((void *)l); }
         return 0;
     case WM_NHAT_KY:
         if (l) { ghi("he_thong", "%s", (const char *)l); free((void *)l); }
@@ -2858,19 +2885,23 @@ static LRESULT CALLBACK thu_tuc_chinh(HWND h, UINT tin, WPARAM w, LPARAM l)
                 InvalidateRect(h, &g.vung_phai, FALSE);
         }
         return 0;
-    case WM_BAUD:
+    case WM_TRANG_THAI: {
+        TrangThaiMay tt = (TrangThaiMay)w;
+        TrangThai moi = doi_trang_thai(tt);
+        /* Dang nap bai ma may bao SAN SANG thi van la "dang nap" cho toi khi
+         * gui het dong cuoi - dung de nhay bang bang qua lai */
+        if (moi == TT_SAN_SANG && ket_noi_dang_nap(g.may)) moi = TT_DANG_NAP;
+        if (moi != g.trang_thai) dat_trang_thai(moi);
+        if (tt == MAY_IDLE && !ket_noi_dang_nap(g.may) && g.moc_bat_dau >= 0)
+            xong_bai();
+        cap_nhat_tien_do();
         return 0;
+    }
 
     case WM_TIMER:
         if (w == 1) {
-            /* Hoi POS moi 2 giay khi may DANG RANH de o vi tri luon dung.
-             * KHONG hoi luc dang chay: moi lenh gui xuong deu lam ESP32 in ra
-             * UART, ma in giua chuoi cat se chan vong xuat xung -> tao vet
-             * dung tren duong cat. */
-            if (dang_ket_noi() && (g.trang_thai == TT_SAN_SANG ||
-                                   g.trang_thai == TT_DA_DUNG ||
-                                   g.trang_thai == TT_TAM_DUNG))
-                gui_lenh_im("POS");
+            /* Lop ket_noi tu hoi "?" moi 0,2 giay roi - o day chi ve lai tien do */
+            if (dang_ket_noi()) cap_nhat_tien_do();
         } else if (w == 2) {
             if (g.moc_bat_dau >= 0)
                 InvalidateRect(h, &g.vung_phai, FALSE);
@@ -2966,6 +2997,7 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE truoc, LPSTR dong_lenh, int hien)
     g.toc_do_tay = 30.0;
     g.buoc_nhich = 1.0;
     g.thoi_gian_duc_lo = 0.8;
+    g.xung_moi_vong_a = 1600.0;
     g.dai_khuc = 200.0;
     g.khe_cat = 8.0;
     g.chua_dau = 20.0;
@@ -2992,11 +3024,11 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE truoc, LPSTR dong_lenh, int hien)
         g.xep = xep2d_tao(&hx);
     }
     memset(&gl, 0, sizeof(gl));
-    gl.dong_esp32 = tu_luong_dong;
+    gl.dong_may = tu_luong_dong;
     gl.nhat_ky = tu_luong_nhat_ky;
     gl.loi_nap = tu_luong_loi_nap;
     gl.vi_tri = tu_luong_vi_tri;
-    gl.baud = tu_luong_baud;
+    gl.trang_thai = tu_luong_trang_thai;
     g.may = ket_noi_tao(&gl);
 
     dang_ky_lop(hi, "cnc_chinh", thu_tuc_chinh, g.nen_nen);
@@ -3028,8 +3060,8 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE truoc, LPSTR dong_lenh, int hien)
     ShowWindow(g.chinh, hien);
     UpdateWindow(g.chinh);
 
-    ghi("he_thong", "%s - san sang. Chon cong COM o 'Tham so...' roi bam Ket noi.",
-        TEN_PHAN_MEM);
+    ghi("he_thong", "%s - san sang. May chay firmware FluidNC. "
+                    "Chon cong COM o 'Tham so...' roi bam Ket noi.", TEN_PHAN_MEM);
     SetTimer(g.chinh, 1, 2000, NULL);   /* hoi vi tri dinh ky */
     SetTimer(g.chinh, 2, 500, NULL);    /* dong ho thoi gian chay */
 

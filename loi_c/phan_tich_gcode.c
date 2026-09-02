@@ -488,3 +488,48 @@ int nen_dong_gui(const char *dong, char *ra, size_t co_ra)
     ra[n] = '\0';
     return (int)n;
 }
+
+/* ==========================================================================
+ * DOI TRUC A TU DO SANG MM CUNG
+ * ==========================================================================
+ * FluidNC coi moi truc la truc THANG khi tinh toc do chay va gia toc. Neu de
+ * truc A bang do thi lenh F o cac duong cat cheo se vo nghia - mo cat luc
+ * nhanh luc cham. Vi vay ngay truoc khi gui xuong may, chu A duoc doi tu DO
+ * sang MM CUNG tren mat ong:
+ *
+ *      mm_cung = do / 360 * pi * duong_kinh
+ *
+ * Ban G-code hien tren man hinh van giu don vi DO cho de doc.
+ */
+int doi_a_sang_mm_cung(const char *dong, double duong_kinh, char *ra, size_t co_ra)
+{
+    const char *p = dong;
+    size_t vt = 0;
+    double chu_vi = duong_kinh > 0.0 ? M_PI * duong_kinh : 0.0;
+
+    if (co_ra == 0) return -1;
+    if (chu_vi <= 0.0) {                 /* chua biet duong kinh: giu nguyen */
+        snprintf(ra, co_ra, "%s", dong);
+        return 0;
+    }
+    while (*p) {
+        if ((*p == 'A' || *p == 'a')) {
+            const char *ket;
+            double gt = doc_so(p + 1, &ket);
+            if (ket != p + 1) {
+                char so[24];
+                int n;
+                so_gon(so, sizeof(so), gt / 360.0 * chu_vi);
+                n = snprintf(ra + vt, co_ra - vt, "A%s", so);
+                if (n < 0 || (size_t)n >= co_ra - vt) return -1;
+                vt += (size_t)n;
+                p = ket;
+                continue;
+            }
+        }
+        if (vt + 1 >= co_ra) return -1;
+        ra[vt++] = *p++;
+    }
+    ra[vt] = '\0';
+    return 0;
+}

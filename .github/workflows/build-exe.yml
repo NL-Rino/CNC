@@ -1,13 +1,13 @@
 name: Dong goi file EXE cho Windows
 
 # Chay tu dong moi khi co thay doi phan mem, hoac bam nut chay tay trong tab
-# Actions. Ket qua: 2 file .exe chay doc lap, tai ve o muc Releases hoac o
+# Actions. Ket qua: mot file .exe chay doc lap, tai ve o muc Releases hoac o
 # phan Artifacts cua lan chay.
 #
-# Phan mem chinh nay viet bang C: dung bang cach bien dich cheo tu Linux sang
+# May cat chay firmware FluidNC san co, khong con firmware tu viet nen o day
+# chi dung phan mem may tinh. Dung bang cach bien dich cheo tu Linux sang
 # Windows (mingw-w64) nen nhanh va cho ra dung file da kiem tra o may phat
-# trien. Ban Python cu van duoc giu lai va van chay het bai kiem tra, dong goi
-# thanh .exe du phong.
+# trien.
 on:
   workflow_dispatch:
   push:
@@ -17,21 +17,15 @@ on:
       - "loi_c/**"
       - "win/**"
       - "kiem_tra_c/**"
-      - "main/main.c"
+      - "fluidnc/**"
       - "Makefile"
-      - "**.pyw"
-      - "loi/**.py"
-      - "kiem_tra/**.py"
       - ".github/workflows/build-exe.yml"
 
 permissions:
   contents: write
 
 jobs:
-  # =====================================================================
-  # PHAN MEM CHINH (ban C) - kiem tra roi bien dich cheo sang Windows
-  # =====================================================================
-  ban-c:
+  dong-goi:
     runs-on: ubuntu-latest
 
     steps:
@@ -43,27 +37,39 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 make
 
+      - name: Kiem tra file cau hinh FluidNC doc duoc
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import glob, yaml, sys
+          for f in sorted(glob.glob("fluidnc/*.yaml")):
+              d = yaml.safe_load(open(f, encoding="utf-8"))
+              assert "axes" in d and "PlasmaSpindle" in d, f
+              print(f, "->", len(d), "muc goc, doc duoc")
+          PY
+
       - name: Chay toan bo bai kiem tra
         # Gom: thu vien moi noi, xep bai, mo phong 3D + the xep 2D, va lop ket
-        # noi noi thang vao firmware that qua mot cap cong ao (pty)
+        # noi noi vao mot ban gia lap may FluidNC qua cap cong ao (pty).
+        # Ban gia lap TU BAO HONG neu phan mem gui qua tay bo dem 127 byte.
         run: make kiem-tra
 
-      - name: Dung 2 file .exe
+      - name: Dung file .exe
         run: make
 
-      - name: Kiem tra 2 file exe da tao ra
+      - name: Kiem tra file exe da tao ra
         run: |
           ls -la ra
           test -f ra/MayCatOng.exe
-          test -f ra/MayCatOng_CaiDat.exe
           file ra/MayCatOng.exe | grep -q "PE32+ executable (GUI) x86-64"
-          file ra/MayCatOng_CaiDat.exe | grep -q "PE32+ executable (GUI) x86-64"
 
       - name: Tai file len phan Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: MayCatOng-windows-exe
-          path: ra/*.exe
+          path: |
+            ra/MayCatOng.exe
+            fluidnc/*.yaml
           retention-days: 90
 
       - name: Tao ban phat hanh de tai ve truc tiep
@@ -71,72 +77,20 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "exe-${{ github.run_number }}" \
-            ra/MayCatOng.exe ra/MayCatOng_CaiDat.exe \
+            ra/MayCatOng.exe fluidnc/may_cat_ong_esp32.yaml \
+            fluidnc/may_cat_ong_esp32s3.yaml \
             --target "${{ github.sha }}" \
             --title "Phan mem may cat ong - ban ${{ github.run_number }}" \
-            --notes "Hai file chay doc lap cho Windows, KHONG can cai gi them.
+            --notes "**MayCatOng.exe** - phan mem van hanh hang ngay: thu vien
+          moi noi, the xep 2D, mo phong 3D, mo file .NC, nhich tay, chay/dung.
+          Chay doc lap tren Windows, KHONG can cai gi them.
 
-          - **MayCatOng.exe** - phan mem van hanh hang ngay (thu vien moi noi, the xep 2D, mo phong 3D, mo file .NC, jog, chay/dung)
-          - **MayCatOng_CaiDat.exe** - phan mem cai dat nang cao (chan GPIO, hieu chuan, dao chieu truc)
+          May cat chay firmware **FluidNC**. Hai file .yaml kem theo la cau hinh
+          may (chan GPIO, so xung, mo plasma, 7 nut bam) - chep vao ESP32 qua
+          giao dien web cua FluidNC:
 
-          Viet bang C thuan, chi dung Win32 + GDI co san trong Windows nen file
-          nho va mo len la chay ngay.
+          - \`may_cat_ong_esp32.yaml\` cho ESP32 devkit goc
+          - \`may_cat_ong_esp32s3.yaml\` cho ESP32-S3-WROOM-1 N16R8
 
-          Tai ve, chay truc tiep. Windows Defender co the canh bao file exe moi tao:
-          chon **More info** roi **Run anyway**.
-
-          Nho nap lai firmware trong \`main/main.c\` cho ESP32 de dung duoc day du tinh nang."
-
-  # =====================================================================
-  # BAN PYTHON CU - giu lai lam du phong, van chay het bai kiem tra
-  # =====================================================================
-  ban-python:
-    runs-on: windows-latest
-
-    steps:
-      - name: Lay ma nguon
-        uses: actions/checkout@v4
-
-      - name: Cai Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Cai cac goi can thiet
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyserial pyinstaller
-
-      - name: Kiem tra cu phap phan mem
-        run: |
-          python -m py_compile may_cat_ong.pyw
-          python -m py_compile cnc_settings.pyw
-          python -m compileall -q loi
-
-      - name: Kiem tra toan hoc cua thu vien moi noi
-        run: python kiem_tra/test_thu_vien.py
-
-      - name: Kiem tra xep bai va do khoang cach
-        run: python kiem_tra/test_xep.py
-
-      - name: Dong goi phan mem VAN HANH
-        run: >
-          python -m PyInstaller --onefile --windowed --noconfirm
-          --name MayCatOng_Python
-          --hidden-import serial.tools.list_ports
-          --collect-submodules loi
-          may_cat_ong.pyw
-
-      - name: Dong goi phan mem CAI DAT
-        run: >
-          python -m PyInstaller --onefile --windowed --noconfirm
-          --name MayCatOng_CaiDat_Python
-          --hidden-import serial.tools.list_ports
-          cnc_settings.pyw
-
-      - name: Tai ban du phong len phan Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: MayCatOng-windows-exe-ban-python-du-phong
-          path: dist/*.exe
-          retention-days: 30
+          Tai ve, chay truc tiep. Windows Defender co the canh bao file exe moi
+          tao: chon **More info** roi **Run anyway**."

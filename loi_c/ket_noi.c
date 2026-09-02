@@ -4,36 +4,37 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
 
-const int BAUD_THU_DAN[SO_BAUD_THU] = {
-    2000000, 1000000, 921600, 460800, 230400, 115200
-};
+#define SO_DONG_BAY_TOI_DA 512    /* so dong toi da dang cho "ok" cung mot luc */
 
 struct KetNoi {
     HamGoiLai gl;
     CongCom *cong;
-    Khoa *khoa;                 /* bao ve cac o so dung chung giua hai luong */
 
     volatile int dang_mo;
-    volatile int baud_dang_dung;
+    volatile TrangThaiMay tt;
+    volatile double x_mm, a_mm;     /* vi tri may doc tu ban tin "?" */
+    double duong_kinh;              /* de doi mm cung <-> do */
 
-    /* --- Trang thai dieu tiet luu luong khi nap dan --- */
-    volatile int cho_trong;         /* so o trong con lai trong vong dem ESP32 */
-    volatile int so_dong_da_nhan;   /* so dong ESP32 da bao nhan */
-    volatile int ket_qua_nap;       /* 0 chua biet, 1 OK, -1 LOI */
-    volatile int dang_nap;          /* dat 0 de huy nap giua chung */
-    volatile int pong;
+    /* --- Dem "ok" tra ve. Luong doc chi TANG, luong nap chi DOC. --- */
+    volatile int so_ok;             /* tong so dong da duoc bao nhan */
+    volatile int ma_loi;            /* != 0 khi FluidNC tra error:N */
+    volatile int ma_bao_dong;       /* != 0 khi FluidNC tra ALARM:N */
 
-    /* Ban sao chuong trinh dang nap (luong nap so huu) */
-    char *bo_dong;                  /* cac chuoi noi tiep nhau, ket thuc bang '\0' */
+    /* --- Ban sao chuong trinh dang nap (luong nap so huu) --- */
+    char *bo_dong;
     const char **chi_muc;
     int so_dong_nap;
+    volatile int dang_nap;
+    volatile int mo_dang_bi_tat;    /* da chen 0x9E de tat mo luc tam dung */
 
-    int baud_chon;
     char ten_cong[CO_TEN_CONG];
 };
 
-/* ------------------------------------------------------------------ TIEN ICH */
+/* ====================================================================== */
+/* TIEN ICH                                                               */
+/* ====================================================================== */
 static void bao_nhat_ky(KetNoi *k, const char *dinh_dang, ...)
 {
     char chu[CO_LOI];
@@ -56,32 +57,140 @@ static void bao_loi_nap(KetNoi *k, const char *dinh_dang, ...)
     k->gl.loi_nap(k->gl.ctx, chu);
 }
 
-int ket_noi_doc_vi_tri(const char *dong, double *x, double *a)
+const char *ten_trang_thai_may(TrangThaiMay tt)
 {
-    const char *p = dong;
-    int co_x = 0, co_a = 0;
-    double gx = 0, ga = 0;
-    while (*p) {
-        if ((p[0] == 'X' || p[0] == 'A') && p[1] == '=') {
-            char *ket = NULL;
-            double gt = strtod(p + 2, &ket);
-            if (ket != p + 2) {
-                if (p[0] == 'X') { gx = gt; co_x = 1; }
-                else             { ga = gt; co_a = 1; }
-                p = ket;
-                continue;
+    switch (tt) {
+    case MAY_IDLE:  return "SAN SANG";
+    case MAY_RUN:   return "DANG CHAY";
+    case MAY_HOLD:  return "TAM DUNG";
+    case MAY_JOG:   return "DANG NHICH";
+    case MAY_HOME:  return "DANG VE GOC";
+    case MAY_ALARM: return "BAO DONG";
+    case MAY_DOOR:  return "CUA MO";
+    case MAY_CHECK: return "CHAY THU";
+    case MAY_SLEEP: return "NGU";
+    default:        return "CHUA RO";
+    }
+}
+
+/* FluidNC tra "error:<so>" khi tu choi mot dong G-code. */
+const char *giai_thich_loi(int ma)
+{
+    switch (ma) {
+    case 1:  return "Thieu chu cai dau lenh";
+    case 2:  return "So viet sai dinh dang";
+    case 3:  return "Lenh $ khong hop le";
+    case 8:  return "Lenh nay chi chay duoc khi may dang ranh";
+    case 9:  return "May dang bao dong - bam Mo khoa truoc";
+    case 10: return "Vuot gioi han mem (chay qua tam cho phep)";
+    case 11: return "Dong lenh qua dai";
+    case 12: return "Toc do vuot qua kha nang cua may";
+    case 15: return "Lenh nhich di qua tam cho phep";
+    case 16: return "Lenh nhich viet sai";
+    case 20: return "Lenh G/M nay FluidNC khong ho tro";
+    case 22: return "Chua khai bao toc do chay (thieu chu F)";
+    case 24: return "Hai lenh tranh nhau dieu khien cung mot truc";
+    case 25: return "Mot chu bi lap lai trong cung mot dong";
+    case 33: return "Diem den khong hop le";
+    case 34: return "Ban kinh cung tron sai";
+    case 36: return "Trong dong co chu thua khong dung toi";
+    case 40: return "Luc khoi dong da co nut hoac cong tac dang bi kich";
+    default: return "Xem so ma loi trong tai lieu FluidNC";
+    }
+}
+
+/* FluidNC tra "ALARM:<so>" khi phai dung may. */
+const char *giai_thich_bao_dong(int ma)
+{
+    switch (ma) {
+    case 1:  return "Cham cong tac hanh trinh - lui ra roi bam Mo khoa";
+    case 2:  return "Vuot gioi han mem";
+    case 3:  return "Da huy giua chung";
+    case 6:  return "Ve goc that bai - bi dung giua chung";
+    case 8:  return "Ve goc that bai - khong roi duoc cong tac";
+    case 9:  return "Ve goc that bai - khong gap cong tac";
+    case 10: return "Mo cat co van de (hong quang khong mo hoac tat giua chung)";
+    case 11: return "Luc khoi dong da co nut hoac cong tac dang bi kich";
+    case 13: return "Dung khan cap - da dung ngay khong giam toc";
+    case 14: return "May chua ve goc";
+    case 15: return "Bo dieu khien vua khoi dong";
+    default: return "Xem so ma bao dong trong tai lieu FluidNC";
+    }
+}
+
+/* ====================================================================== */
+/* DOC BAN TIN TRANG THAI                                                 */
+/* ====================================================================== */
+/* "<Idle|MPos:1.5,0.000,0.000,2.5|FS:0,0>"  ->  trang thai + vi tri.
+ * FluidNC bao 4 truc (X Y Z A); truc keo la so thu nhat, truc xoay so thu tu. */
+int doc_dong_trang_thai(const char *dong, TrangThaiMay *tt,
+                        double *x_mm, double *a_mm)
+{
+    static const struct { const char *ten; TrangThaiMay tt; } BANG[] = {
+        { "Idle", MAY_IDLE },   { "Run", MAY_RUN },     { "Hold", MAY_HOLD },
+        { "Jog", MAY_JOG },     { "Home", MAY_HOME },   { "Alarm", MAY_ALARM },
+        { "Door", MAY_DOOR },   { "Check", MAY_CHECK }, { "Sleep", MAY_SLEEP },
+        { "Starting", MAY_IDLE }
+    };
+    const char *p, *vt;
+    size_t i;
+
+    if (dong[0] != '<') return -1;
+    p = dong + 1;
+
+    if (tt) {
+        *tt = MAY_KHONG_RO;
+        for (i = 0; i < sizeof(BANG) / sizeof(BANG[0]); i++) {
+            size_t d = strlen(BANG[i].ten);
+            if (strncmp(p, BANG[i].ten, d) == 0 &&
+                (p[d] == '|' || p[d] == ':' || p[d] == '>')) {
+                *tt = BANG[i].tt;
+                break;
             }
         }
-        p++;
     }
-    if (!co_x || !co_a) return -1;
-    if (x) *x = gx;
-    if (a) *a = ga;
+
+    /* MPos = vi tri may, WPos = vi tri so voi goc cua nguoi dung. Nhan ca hai. */
+    vt = strstr(dong, "|MPos:");
+    if (!vt) vt = strstr(dong, "|WPos:");
+    if (!vt) return (tt && *tt != MAY_KHONG_RO) ? 0 : -1;
+    vt = strchr(vt, ':') + 1;
+
+    {
+        double so[6];
+        int n = 0;
+        char *ket = NULL;
+        while (n < 6) {
+            double gt = strtod(vt, &ket);
+            if (ket == vt) break;
+            so[n++] = gt;
+            vt = ket;
+            if (*vt != ',') break;
+            vt++;
+        }
+        if (n < 1) return -1;
+        if (x_mm) *x_mm = so[0];
+        /* Truc A la truc thu tu. Neu may chi khai bao it truc hon thi coi nhu 0. */
+        if (a_mm) *a_mm = n >= 4 ? so[3] : 0.0;
+    }
     return 0;
 }
 
-/* ------------------------------------------------------------------- XU LY */
-/* Bo dau cach hai dau va ky tu xuong dong (tuong duong .strip() ben Python) */
+/* Doi mm cung tren mat ong <-> do quay */
+static double mm_sang_do(const KetNoi *k, double mm)
+{
+    double chu_vi = PI * k->duong_kinh;
+    return chu_vi > 0.0 ? mm / chu_vi * 360.0 : 0.0;
+}
+
+static double do_sang_mm(const KetNoi *k, double gt_do)
+{
+    return gt_do / 360.0 * PI * k->duong_kinh;
+}
+
+/* ====================================================================== */
+/* XU LY MOT DONG FLUIDNC GUI LEN                                         */
+/* ====================================================================== */
 static void cat_gon(char *s)
 {
     char *dau = s, *cuoi;
@@ -93,74 +202,65 @@ static void cat_gon(char *s)
         *--cuoi = '\0';
 }
 
-/* Lay phan thu "so_thu" (dem tu 0) trong chuoi ngan cach bang dau ';'.
- * Tra 0 = doc duoc so nguyen, -1 = khong co / khong phai so. */
-static int lay_phan_so(const char *dong, int so_thu, int *ra)
-{
-    const char *p = dong;
-    int i;
-    char *ket = NULL;
-    long gt;
-    for (i = 0; i < so_thu; i++) {
-        p = strchr(p, ';');
-        if (!p) return -1;
-        p++;
-    }
-    gt = strtol(p, &ket, 10);
-    if (ket == p) return -1;
-    *ra = (int)gt;
-    return 0;
-}
-
 static void xu_ly_dong(KetNoi *k, const char *dong)
 {
-    /* --- Bao nhan khi nap dan: "OK;<cho_trong>;<so_dong_da_nhan>" ---
-     * ESP32 bao theo LO 8 dong cho do ton bang thong; so dong lay THANG tu
-     * ban tin nen bao theo lo hay tung dong deu cho ket qua nhu nhau. */
-    if (strncmp(dong, "OK;", 3) == 0 || strncmp(dong, "BUF;", 4) == 0) {
-        int gt;
-        if (lay_phan_so(dong, 1, &gt) == 0) k->cho_trong = gt;
-        if (lay_phan_so(dong, 2, &gt) == 0) k->so_dong_da_nhan = gt;
+    /* --- Ban tin trang thai: KHONG do vao nhat ky, no ve moi 0,2 giay --- */
+    if (dong[0] == '<') {
+        TrangThaiMay tt;
+        double x, a;
+        if (doc_dong_trang_thai(dong, &tt, &x, &a) == 0) {
+            TrangThaiMay cu = k->tt;
+            k->x_mm = x;
+            k->a_mm = a;
+            if (tt != MAY_KHONG_RO) k->tt = tt;
+            if (k->gl.vi_tri) k->gl.vi_tri(k->gl.ctx, x, mm_sang_do(k, a));
+            if (tt != cu && tt != MAY_KHONG_RO && k->gl.trang_thai)
+                k->gl.trang_thai(k->gl.ctx, tt);
+        }
+        return;
+    }
+
+    /* --- Bao nhan tung dong --- */
+    if (strcmp(dong, "ok") == 0) {
+        k->so_ok++;
         return;                     /* khong lam ngap khung nhat ky */
     }
-    if (strncmp(dong, "OK_BEGIN;", 9) == 0) {
-        int gt;
-        if (lay_phan_so(dong, 1, &gt) == 0) k->cho_trong = gt;
-        return;
-    }
-    if (strncmp(dong, "PONG;", 5) == 0) {
-        int gt;
-        if (lay_phan_so(dong, 1, &gt) == 0) k->pong = gt;
-        return;
-    }
-    if (strncmp(dong, "OK_NAP", 6) == 0) {
-        int gt;
-        k->ket_qua_nap = 1;
-        if (lay_phan_so(dong, 1, &gt) == 0) k->so_dong_da_nhan = gt;
-    } else if (strncmp(dong, "LOI_NAP", 7) == 0) {
-        k->ket_qua_nap = -1;
+    if (strncmp(dong, "error:", 6) == 0) {
+        int ma = atoi(dong + 6);
+        k->so_ok++;                 /* dong nay cung da roi khoi bo dem */
+        k->ma_loi = ma ? ma : -1;
+    } else if (strncmp(dong, "ALARM:", 6) == 0) {
+        int ma = atoi(dong + 6);
+        k->ma_bao_dong = ma ? ma : -1;
+        k->tt = MAY_ALARM;
+        if (k->gl.trang_thai) k->gl.trang_thai(k->gl.ctx, MAY_ALARM);
     }
 
-    if (strncmp(dong, "Vi tri:", 7) == 0) {
-        double x, a;
-        if (ket_noi_doc_vi_tri(dong, &x, &a) == 0 && k->gl.vi_tri)
-            k->gl.vi_tri(k->gl.ctx, x, a);
-    }
-
-    if (k->gl.dong_esp32) k->gl.dong_esp32(k->gl.ctx, dong);
+    if (k->gl.dong_may) k->gl.dong_may(k->gl.ctx, dong);
 }
 
-/* ----------------------------------------------------------- LUONG DOC COM */
+/* ====================================================================== */
+/* LUONG DOC CONG                                                         */
+/* ====================================================================== */
 static void vong_doc(void *tham_so)
 {
     KetNoi *k = (KetNoi *)tham_so;
     char dem[CO_DONG_NHAN];
     int co_dem = 0;
+    double lan_hoi_cuoi = 0.0;
 
     while (k->dang_mo && cong_dang_mo(k->cong)) {
         char tho[512];
-        int n = cong_doc(k->cong, tho, (int)sizeof(tho));
-        int i;
+        int n, i;
+
+        /* Hoi "?" dinh ky de biet vi tri va trang thai. */
+        if (gio_giay() - lan_hoi_cuoi > NHIP_HOI_TRANG_THAI_MS / 1000.0) {
+            char c = RT_TRANG_THAI;
+            cong_ghi(k->cong, &c, 1);
+            lan_hoi_cuoi = gio_giay();
+        }
+
+        n = cong_doc(k->cong, tho, (int)sizeof(tho));
         if (n < 0) break;
         for (i = 0; i < n; i++) {
             char c = tho[i];
@@ -174,14 +274,14 @@ static void vong_doc(void *tham_so)
             } else if (co_dem < (int)sizeof(dem) - 1) {
                 dem[co_dem++] = c;
             }
-            /* dong dai qua muc thi phan thua bi bo - khong bao gio xay ra voi
-             * ban tin cua firmware, chi de khong bao gio tran bo dem */
         }
     }
     k->dang_mo = 0;
 }
 
-/* ------------------------------------------------------------------- GUI */
+/* ====================================================================== */
+/* GUI                                                                    */
+/* ====================================================================== */
 int ket_noi_gui(KetNoi *k, const char *lenh)
 {
     char dem[CO_DONG_NHAN + 2];
@@ -197,222 +297,107 @@ int ket_noi_gui(KetNoi *k, const char *lenh)
     return 1;
 }
 
-/* ------------------------------------------- THUONG LUONG TOC DO DUONG COM */
-static int thu_mot_baud(KetNoi *k, int baud)
+int ket_noi_gui_thoi_gian_thuc(KetNoi *k, unsigned char ma)
 {
-    char lenh[32];
-    int lan;
-    k->pong = 0;
-    snprintf(lenh, sizeof(lenh), "BAUD;%d", baud);
-    ket_noi_gui(k, lenh);
-    ngu_ms(250);                        /* cho ESP32 tra loi va doi baud */
-    if (cong_dat_baud(k->cong, baud) != 0) return 0;   /* may tinh doi theo */
-    ngu_ms(150);
-    cong_xoa_dem_vao(k->cong);
-
-    for (lan = 0; lan < 3; lan++) {     /* PING vai lan phong khi rot goi */
-        double han;
-        k->pong = 0;
-        ket_noi_gui(k, "PING");
-        han = gio_giay() + 0.5;
-        while (gio_giay() < han) {
-            if (k->pong == baud) return 1;
-            ngu_ms(10);
-        }
-    }
-    cong_dat_baud(k->cong, BAUD_KHOI_DONG);
-    cong_xoa_dem_vao(k->cong);
-    return 0;
+    char c = (char)ma;
+    if (!k || !cong_dang_mo(k->cong)) return 0;
+    return cong_ghi(k->cong, &c, 1) == 1;
 }
 
-/* Nang baud len muc cao nhat ma may THUC SU chay duoc.
+/* ====================================================================== */
+/* NAP BAI - dem ky tu                                                    */
+/* ====================================================================== */
+/* Cach "dem ky tu" (character counting), chuan cua moi bo gui G-code cho
+ * GRBL: may tinh cu gui tiep chung nao TONG SO BYTE cua cac dong CHUA duoc
+ * bao nhan con duoi suc chua bo dem nhan cua may. Moi "ok" tra ve la bot di
+ * so byte cua dong cu nhat.
  *
- * An toan tuyet doi - khong bao gio mat lien lac:
- *   1. Gui BAUD;<n>, ESP32 tra OK_BAUD roi doi toc do
- *   2. May tinh cung doi, gui PING
- *   3. Co PONG  -> giu toc do nay
- *      Khong co -> may tinh ve 115200; ESP32 CUNG tu ve 115200 sau 4 giay
- *                  (luoi an toan nam trong firmware), roi thu muc thap hon
- */
-static void thuong_luong_baud(void *tham_so)
-{
-    KetNoi *k = (KetNoi *)tham_so;
-    int danh_sach[SO_BAUD_THU];
-    int so_muc, i, da_chot = 0;
-
-    if (k->baud_chon > 0) {
-        danh_sach[0] = k->baud_chon;
-        so_muc = 1;
-    } else {
-        memcpy(danh_sach, BAUD_THU_DAN, sizeof(danh_sach));
-        so_muc = SO_BAUD_THU;
-    }
-
-    for (i = 0; i < so_muc; i++) {
-        int baud = danh_sach[i];
-        if (!k->dang_mo) return;
-        if (baud == BAUD_KHOI_DONG) break;      /* dang o san toc do nay roi */
-        if (thu_mot_baud(k, baud)) {
-            k->baud_dang_dung = baud;
-            if (k->gl.baud) k->gl.baud(k->gl.ctx, baud);
-            bao_nhat_ky(k, "Da nang toc do duong COM len %d baud (%dx nhanh hon truoc).",
-                        baud, baud / BAUD_KHOI_DONG);
-            da_chot = 1;
-            break;
-        }
-        bao_nhat_ky(k, "%d baud khong on dinh, thu muc thap hon...", baud);
-        ngu_ms(4500);       /* cho ESP32 tu ve 115200 roi moi thu tiep */
-    }
-    if (!da_chot) {
-        k->baud_dang_dung = BAUD_KHOI_DONG;
-        if (k->gl.baud) k->gl.baud(k->gl.ctx, BAUD_KHOI_DONG);
-        bao_nhat_ky(k, "Giu nguyen %d baud.", BAUD_KHOI_DONG);
-    }
-    ket_noi_gui(k, "CFG;GET");
-}
-
-/* ------------------------------------------------------------- NAP DAN */
-static void nap_nen(void *tham_so)
+ * Nho vay duong day luc nao cung day du lieu, bo lap ke hoach cua FluidNC
+ * luon co san nhieu doan de nhin truoc va tinh gia toc - dieu quyet dinh
+ * chat luong mep cat o cac cho gap goc. */
+static void nap_bai(void *tham_so)
 {
     KetNoi *k = (KetNoi *)tham_so;
     int tong = k->so_dong_nap;
+    int da_gui = 0, moc_bao_cao = 0;
+    int *do_dai;                    /* do dai tung dong da gui, de tru dan */
     long byte_tong = 0;
-    int da_gui = 0, da_bam_chay = 0, moc_bao_cao = 0;
-    double moc_con_cho, han;
+    double moc_cho;
     int i;
-    char *goi = NULL;
-    size_t co_goi = 0;
 
+    do_dai = (int *)malloc(sizeof(int) * (size_t)tong);
+    if (!do_dai) {
+        bao_loi_nap(k, "Het bo nho khi chuan bi nap bai.");
+        k->dang_nap = 0;
+        return;
+    }
     for (i = 0; i < tong; i++) byte_tong += (long)strlen(k->chi_muc[i]) + 1;
 
-    k->cho_trong = 0;
-    k->so_dong_da_nhan = 0;
-    k->ket_qua_nap = 0;
+    k->so_ok = 0;
+    k->ma_loi = 0;
     k->dang_nap = 1;
 
-    bao_nhat_ky(k, "Nap dan %d baud: gui truoc %d dong roi vua chay vua nap "
-                   "(tong %d dong, %ld byte).",
-                k->baud_dang_dung, SO_DONG_NAP_TRUOC, tong, byte_tong);
-    ket_noi_gui(k, "PROG;BEGIN");
+    bao_nhat_ky(k, "Nap bai xuong FluidNC: %d dong, %ld byte. Vua gui vua chay.",
+                tong, byte_tong);
 
-    han = gio_giay() + 3.0;
-    while (gio_giay() < han && k->cho_trong <= 0) ngu_ms(1);
-    if (k->cho_trong <= 0) {
-        bao_loi_nap(k, "ESP32 khong tra loi PROG;BEGIN. Kiem tra lai ket noi.");
-        goto xong;
-    }
+    moc_cho = gio_giay();
+    while (da_gui < tong || k->so_ok < da_gui) {
+        int dang_bay = 0;
 
-    moc_con_cho = gio_giay();
-    while (da_gui < tong) {
-        int chua_bao_nhan, cho_thuc, lo, j;
-        size_t can;
-        char *v;
-
-        if (k->ket_qua_nap == -1) {
-            bao_loi_nap(k, "ESP32 tu choi chuong trinh (LOI_NAP). "
-                           "Xem tab Alarm de biet dong nao sai.");
-            goto xong;
-        }
         if (!k->dang_nap) {
             bao_nhat_ky(k, "Da huy nap theo yeu cau.");
-            goto xong;
+            break;
+        }
+        if (k->ma_loi) {
+            bao_loi_nap(k, "FluidNC tu choi dong %d: error:%d - %s",
+                        k->so_ok, k->ma_loi, giai_thich_loi(k->ma_loi));
+            break;
+        }
+        if (k->ma_bao_dong) {
+            bao_loi_nap(k, "May bao dong giua chung: ALARM:%d - %s",
+                        k->ma_bao_dong, giai_thich_bao_dong(k->ma_bao_dong));
+            break;
         }
 
-        /* Con bao nhieu dong dang bay tren duong chua duoc bao nhan.
-         * Mot dong co the sinh toi 2 buoc (vd M3 + G1) nen tru gap doi. */
-        chua_bao_nhan = da_gui - k->so_dong_da_nhan;
-        cho_thuc = k->cho_trong - chua_bao_nhan * 2;
+        /* So byte cua cac dong da gui ma chua co "ok" tra ve */
+        for (i = k->so_ok; i < da_gui; i++) dang_bay += do_dai[i];
 
-        if (cho_thuc < NGUONG_GUI_TIEP) {
-            /* ESP32 chi bao cho trong khi tra loi mot dong. Neu may tinh
-             * ngung gui va cu ngoi doi thi khong bao gio biet bo dem da
-             * voi ra -> ket cung ca hai ben. Phai CHU DONG hoi bang BUF. */
-            ket_noi_gui(k, "BUF");
-            ngu_ms(3);
-            if (gio_giay() - moc_con_cho > CHO_TOI_DA_S) {
-                bao_loi_nap(k, "ESP32 khong voi bo dem sau %.0f giay "
-                               "- may co the da dung. Da huy nap.", CHO_TOI_DA_S);
-                goto xong;
+        if (da_gui < tong &&
+            dang_bay + (int)strlen(k->chi_muc[da_gui]) + 1 <= CO_DEM_NHAN_FLUIDNC) {
+            char dem[CO_DONG_NHAN + 2];
+            int n = snprintf(dem, sizeof(dem), "%s\n", k->chi_muc[da_gui]);
+            if (n < 0 || n >= (int)sizeof(dem)) {
+                bao_loi_nap(k, "Dong %d qua dai de gui.", da_gui + 1);
+                break;
             }
-            continue;
-        }
-        moc_con_cho = gio_giay();
-
-        lo = cho_thuc;
-        if (lo > LO_GUI_TOI_DA) lo = LO_GUI_TOI_DA;
-        if (lo > tong - da_gui) lo = tong - da_gui;
-
-        can = 1;
-        for (j = 0; j < lo; j++) can += strlen(k->chi_muc[da_gui + j]) + 1;
-        if (can > co_goi) {
-            char *moi = (char *)realloc(goi, can);
-            if (!moi) { bao_loi_nap(k, "Het bo nho khi dong goi du lieu gui."); goto xong; }
-            goi = moi;
-            co_goi = can;
-        }
-        v = goi;
-        for (j = 0; j < lo; j++) {
-            size_t d = strlen(k->chi_muc[da_gui + j]);
-            memcpy(v, k->chi_muc[da_gui + j], d);
-            v += d;
-            *v++ = '\n';
-        }
-        if (cong_ghi(k->cong, goi, (int)(v - goi)) < 0) {
-            bao_loi_nap(k, "Loi khi gui du lieu: mat ket noi cong COM.");
-            goto xong;
-        }
-        da_gui += lo;
-
-        /* --- Du buoc dem dau tien -> CHAY NGAY, khong cho nap het --- */
-        if (!da_bam_chay && da_gui >= (tong < SO_DONG_NAP_TRUOC ? tong : SO_DONG_NAP_TRUOC)) {
-            int nguong = tong < SO_DONG_NAP_TRUOC ? tong : SO_DONG_NAP_TRUOC;
-            han = gio_giay() + 5.0;
-            while (gio_giay() < han && k->ket_qua_nap != -1 &&
-                   k->so_dong_da_nhan < nguong)
-                ngu_ms(1);
-            if (k->ket_qua_nap == -1) {
-                bao_loi_nap(k, "ESP32 tu choi chuong trinh (LOI_NAP).");
-                goto xong;
+            if (cong_ghi(k->cong, dem, n) < 0) {
+                bao_loi_nap(k, "Mat ket noi cong COM giua chung.");
+                break;
             }
-            ket_noi_gui(k, "RUN");
-            da_bam_chay = 1;
-            bao_nhat_ky(k, "Da dem san %d dong - BAT DAU CHAY, phan con lai "
-                           "nap tiep khi dang chay.", k->so_dong_da_nhan);
+            do_dai[da_gui] = n;
+            da_gui++;
+            moc_cho = gio_giay();
+
+            if (da_gui - moc_bao_cao >= 400) {
+                moc_bao_cao = da_gui;
+                bao_nhat_ky(k, "... da gui %d/%d dong", da_gui, tong);
+            }
+            continue;               /* thu gui tiep ngay, khong nghi */
         }
 
-        if (da_gui - moc_bao_cao >= 400) {
-            moc_bao_cao = da_gui;
-            bao_nhat_ky(k, "... da nap %d/%d dong", da_gui, tong);
+        /* Bo dem cua may da day (hoac da gui het) - cho "ok" tra ve. */
+        ngu_ms(2);
+        if (gio_giay() - moc_cho > 120.0) {
+            bao_loi_nap(k, "FluidNC khong tra loi sau 2 phut - may co the da dung. "
+                           "Da huy nap.");
+            break;
         }
     }
 
-    /* PROG;END di SAU cac dong G-code tren cung duong truyen nen ESP32
-     * chac chan xu ly no cuoi cung - khong can cho bao nhan tung dong */
-    ket_noi_gui(k, "PROG;END");
-    han = gio_giay() + 15.0;
-    while (gio_giay() < han && k->ket_qua_nap == 0) ngu_ms(20);
-    if (k->ket_qua_nap == -1) {
-        bao_loi_nap(k, "ESP32 tu choi chuong trinh (LOI_NAP). "
-                       "Xem tab Alarm de biet dong nao sai.");
-        goto xong;
-    }
-    if (k->ket_qua_nap == 0) {
-        bao_loi_nap(k, "ESP32 khong xac nhan nap xong sau 15 giay.");
-        goto xong;
-    }
-    if (k->so_dong_da_nhan != tong)
-        bao_nhat_ky(k, "Canh bao: da gui %d dong nhung ESP32 bao nhan %d dong.",
-                    tong, k->so_dong_da_nhan);
+    if (k->dang_nap && !k->ma_loi && !k->ma_bao_dong && k->so_ok >= tong)
+        bao_nhat_ky(k, "Da gui xong toan bo %d dong, may dang chay not.", tong);
 
-    if (!da_bam_chay) {         /* bai qua ngan: nap xong het roi moi chay */
-        ket_noi_gui(k, "RUN");
-        bao_nhat_ky(k, "Da nap xong ca bai, bat dau CHAY.");
-    } else {
-        bao_nhat_ky(k, "Da nap xong toan bo %d dong, may dang chay tiep.", tong);
-    }
-
-xong:
-    free(goi);
+    free(do_dai);
     k->dang_nap = 0;
 }
 
@@ -423,15 +408,21 @@ int ket_noi_nap_va_chay(KetNoi *k, const char *const *cac_dong, int so_dong)
     char *v;
 
     if (!k || k->dang_nap) return -1;
+    if (k->tt == MAY_ALARM) {
+        bao_loi_nap(k, "May dang bao dong. Bam 'Mo khoa' de go bao dong truoc "
+                       "khi chay.");
+        return -1;
+    }
 
-    /* Chan chan lan cuoi: dong rong xuong toi ESP32 se bi bo qua KHONG kem
-     * bao nhan, lam lech so dem hai ben */
+    /* Chan chan lan cuoi: dong rong gui xuong FluidNC cung duoc tra "ok",
+     * nhung to ra vo ich va lam lech so dem tien trinh. */
     for (i = 0; i < so_dong; i++)
         if (cac_dong[i] && cac_dong[i][0]) {
             tong_byte += (long)strlen(cac_dong[i]) + 1;
             n++;
         }
     if (n == 0) return -1;
+    if (n > SO_DONG_BAY_TOI_DA * 1000) return -1;
 
     free(k->bo_dong);
     free(k->chi_muc);
@@ -453,26 +444,134 @@ int ket_noi_nap_va_chay(KetNoi *k, const char *const *cac_dong, int so_dong)
         v += d;
     }
     k->so_dong_nap = n;
-    k->dang_nap = 1;            /* dat truoc de khong bi bam hai lan */
-    if (!luong_chay(nap_nen, k)) { k->dang_nap = 0; return -1; }
+    k->dang_nap = 1;                /* dat truoc de khong bi bam hai lan */
+    k->mo_dang_bi_tat = 0;
+    if (!luong_chay(nap_bai, k)) { k->dang_nap = 0; return -1; }
     return 0;
 }
 
 void ket_noi_huy_nap(KetNoi *k) { if (k) k->dang_nap = 0; }
 int  ket_noi_dang_nap(const KetNoi *k) { return k ? k->dang_nap : 0; }
-int  ket_noi_so_dong_da_nhan(const KetNoi *k) { return k ? k->so_dong_da_nhan : 0; }
-int  ket_noi_cho_trong(const KetNoi *k) { return k ? k->cho_trong : 0; }
+int  ket_noi_so_dong_da_nhan(const KetNoi *k) { return k ? k->so_ok : 0; }
+int  ket_noi_so_dong_ca_bai(const KetNoi *k) { return k ? k->so_dong_nap : 0; }
 int  ket_noi_dang_mo(const KetNoi *k) { return k ? k->dang_mo : 0; }
-int  ket_noi_baud_dang_dung(const KetNoi *k) { return k ? k->baud_dang_dung : BAUD_KHOI_DONG; }
+TrangThaiMay ket_noi_trang_thai(const KetNoi *k) { return k ? k->tt : MAY_KHONG_RO; }
+double ket_noi_duong_kinh(const KetNoi *k) { return k ? k->duong_kinh : 0.0; }
 
-/* ------------------------------------------------------------- MO / DONG */
+void ket_noi_vi_tri(const KetNoi *k, double *x_mm, double *a_do)
+{
+    if (!k) return;
+    if (x_mm) *x_mm = k->x_mm;
+    if (a_do) *a_do = mm_sang_do(k, k->a_mm);
+}
+
+/* ====================================================================== */
+/* DIEU KHIEN MAY                                                         */
+/* ====================================================================== */
+void ket_noi_tam_dung(KetNoi *k)
+{
+    if (!k) return;
+    ket_noi_gui_thoi_gian_thuc(k, RT_TAM_DUNG);
+    /* Cho may dung han roi TAT MO CAT. Neu de mo chay tren ong dang dung yen
+     * thi chi vai giay la thung phoi. */
+    {
+        double han = gio_giay() + 3.0;
+        while (gio_giay() < han && k->tt != MAY_HOLD) ngu_ms(20);
+    }
+    if (ket_noi_gui_thoi_gian_thuc(k, RT_TAT_BAT_MO)) {
+        k->mo_dang_bi_tat = 1;
+        bao_nhat_ky(k, "Da tam dung va tat mo cat.");
+    }
+}
+
+void ket_noi_chay_tiep(KetNoi *k, int thoi_gian_duc_lo_ms)
+{
+    if (!k) return;
+    if (thoi_gian_duc_lo_ms > 0 && k->mo_dang_bi_tat) {
+        /* Bat lai mo cat trong khi ong VAN DUNG YEN, cho duc xuyen qua thanh
+         * ong roi moi cho chay - neu khong mach cat se bi dut doan. */
+        ket_noi_gui_thoi_gian_thuc(k, RT_TAT_BAT_MO);
+        k->mo_dang_bi_tat = 0;
+        bao_nhat_ky(k, "Bat lai mo cat, cho duc lo %.2f giay...",
+                    thoi_gian_duc_lo_ms / 1000.0);
+        ngu_ms(thoi_gian_duc_lo_ms);
+    }
+    k->mo_dang_bi_tat = 0;
+    ket_noi_gui_thoi_gian_thuc(k, RT_CHAY_TIEP);
+}
+
+void ket_noi_dung_han(KetNoi *k)
+{
+    if (!k) return;
+    k->dang_nap = 0;
+    ket_noi_gui_thoi_gian_thuc(k, RT_DUNG_HAN);
+    k->mo_dang_bi_tat = 0;
+    bao_nhat_ky(k, "Da dung han (khoi dong lai bo dieu khien).");
+}
+
+void ket_noi_mo_khoa(KetNoi *k)
+{
+    if (!k) return;
+    k->ma_bao_dong = 0;
+    ket_noi_gui(k, "$X");
+}
+
+void ket_noi_ve_goc(KetNoi *k) { if (k) ket_noi_gui(k, "$H"); }
+
+/* Lay cho dang dung lam goc 0 cua ca hai truc. */
+void ket_noi_dat_goc(KetNoi *k)
+{
+    if (!k) return;
+    ket_noi_gui(k, "G10 L20 P0 X0 A0");
+}
+
+void ket_noi_jog(KetNoi *k, char truc, double khoang, double toc_do)
+{
+    char lenh[96];
+    if (!k) return;
+    /* Truc A nguoi dung nhap bang DO, may lam viec bang MM CUNG */
+    if (truc == 'A' || truc == 'a') khoang = do_sang_mm(k, khoang);
+    snprintf(lenh, sizeof(lenh), "$J=G91 G21 %c%.4f F%.1f",
+             truc == 'a' ? 'A' : truc, khoang, toc_do);
+    ket_noi_gui(k, lenh);
+}
+
+void ket_noi_huy_jog(KetNoi *k)
+{
+    if (k) ket_noi_gui_thoi_gian_thuc(k, RT_HUY_JOG);
+}
+
+/* ====================================================================== */
+/* DUONG KINH ONG                                                         */
+/* ====================================================================== */
+int ket_noi_dat_duong_kinh(KetNoi *k, double duong_kinh_mm, double xung_moi_vong_a)
+{
+    char lenh[96];
+    double xung_moi_mm;
+    if (!k || duong_kinh_mm <= 0 || xung_moi_vong_a <= 0) return -1;
+    k->duong_kinh = duong_kinh_mm;
+    if (!cong_dang_mo(k->cong)) return 0;   /* nho lai, gui khi ket noi */
+
+    /* Truc A tinh bang mm cung tren mat ong, nen so xung tren mot mm phu thuoc
+     * duong kinh: xung_moi_vong / chu_vi */
+    xung_moi_mm = xung_moi_vong_a / (PI * duong_kinh_mm);
+    snprintf(lenh, sizeof(lenh), "$/axes/a/steps_per_mm=%.4f", xung_moi_mm);
+    if (!ket_noi_gui(k, lenh)) return -1;
+    bao_nhat_ky(k, "Ong D%g: truc xoay dat lai %.4f xung tren mot mm cung.",
+                duong_kinh_mm, xung_moi_mm);
+    return 0;
+}
+
+/* ====================================================================== */
+/* MO / DONG                                                              */
+/* ====================================================================== */
 KetNoi *ket_noi_tao(const HamGoiLai *goi_lai)
 {
     KetNoi *k = (KetNoi *)calloc(1, sizeof(*k));
     if (!k) return NULL;
     if (goi_lai) k->gl = *goi_lai;
-    k->khoa = khoa_tao();
-    k->baud_dang_dung = BAUD_KHOI_DONG;
+    k->duong_kinh = 60.0;
+    k->tt = MAY_KHONG_RO;
     return k;
 }
 
@@ -480,24 +579,23 @@ void ket_noi_giai_phong(KetNoi *k)
 {
     if (!k) return;
     ket_noi_dong(k);
-    ngu_ms(120);                /* cho luong doc thoat khoi vong lap */
-    khoa_giai_phong(k->khoa);
+    ngu_ms(150);                /* cho luong doc thoat khoi vong lap */
     free(k->bo_dong);
     free(k->chi_muc);
     free(k);
 }
 
-int ket_noi_mo(KetNoi *k, const char *ten_cong, int baud_chon, char *loi)
+int ket_noi_mo(KetNoi *k, const char *ten_cong, char *loi)
 {
     if (!k) return -1;
     if (k->dang_mo) { dat_loi(loi, "Cong dang mo san."); return -1; }
-    k->cong = cong_mo(ten_cong, BAUD_KHOI_DONG, loi);
+    k->cong = cong_mo(ten_cong, BAUD_FLUIDNC, loi);
     if (!k->cong) return -1;
     snprintf(k->ten_cong, sizeof(k->ten_cong), "%s", ten_cong);
-    ngu_ms(2000);               /* ESP32 khoi dong lai khi cong Serial vua mo */
     k->dang_mo = 1;
-    k->baud_dang_dung = BAUD_KHOI_DONG;
-    k->baud_chon = baud_chon;
+    k->tt = MAY_KHONG_RO;
+    k->ma_loi = 0;
+    k->ma_bao_dong = 0;
     if (!luong_chay(vong_doc, k)) {
         dat_loi(loi, "Khong tao duoc luong doc cong COM.");
         cong_dong(k->cong);
@@ -505,9 +603,9 @@ int ket_noi_mo(KetNoi *k, const char *ten_cong, int baud_chon, char *loi)
         k->dang_mo = 0;
         return -1;
     }
-    if (!luong_chay(thuong_luong_baud, k))
-        bao_nhat_ky(k, "Khong tao duoc luong thuong luong baud, giu %d.",
-                    BAUD_KHOI_DONG);
+    /* Mo cong Serial lam ESP32 khoi dong lai - cho no noi xong loi chao. */
+    ngu_ms(2000);
+    cong_xoa_dem_vao(k->cong);
     return 0;
 }
 
@@ -520,4 +618,5 @@ void ket_noi_dong(KetNoi *k)
         cong_dong(k->cong);
         k->cong = NULL;
     }
+    k->tt = MAY_KHONG_RO;
 }

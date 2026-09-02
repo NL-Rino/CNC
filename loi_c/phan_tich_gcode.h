@@ -51,4 +51,8 @@ int phan_tich_chuong_trinh(const char *const *cac_dong, int so_dong,
  * bo comment, bo dau cach, bo so 0 thua. Tra ve do dai chuoi ket qua. */
 int nen_dong_gui(const char *dong, char *ra, size_t co_ra);
 
+/* Doi chu A trong mot dong G-code tu DO sang MM CUNG tren mat ong, de gui
+ * xuong FluidNC (xem giai thich trong phan_tich_gcode.c). Tra 0 = xong. */
+int doi_a_sang_mm_cung(const char *dong, double duong_kinh, char *ra, size_t co_ra);
+
 #endif

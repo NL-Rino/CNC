@@ -1,0 +1,149 @@
+# ============================================================================
+# MAY CAT ONG PLASMA CNC - cau hinh cho FluidNC (ban ESP32 devkit goc)
+# ============================================================================
+#
+# Chep file nay vao ESP32 dang chay FluidNC:
+#     fluidterm.py            (hoac WebUI)
+#     $LocalFS/Upload  ->  chon file nay
+#     $Config/Filename=may_cat_ong_esp32.yaml
+#     $Bye                    (khoi dong lai)
+#
+# HAI TRUC:
+#   X = truc keo ong, don vi mm. HAI dong co keo cung mot truc (motor0 va
+#       motor1) - FluidNC dieu khien chung nhu mot truc, khong bao gio lech.
+#   A = truc xoay ong, don vi MM CUNG tren mat ong (khong phai do).
+#
+# VI SAO TRUC A TINH BANG MM CHU KHONG PHAI DO: FluidNC coi moi truc la truc
+# thang khi tinh toc do chay va gia toc. Neu de truc A bang do thi lenh F se
+# vo nghia o cac duong cat cheo - mo cat luc nhanh luc cham. De ca hai truc
+# cung don vi mm thi F chinh la TOC DO MO CAT LUOT TREN MAT ONG, dung deu tren
+# moi duong cat. Phan mem may tinh tu quy doi do -> mm cung truoc khi gui.
+#
+# DOI DUONG KINH ONG: steps_per_mm cua truc A phu thuoc duong kinh ong:
+#     steps_per_mm_A = so_xung_moi_vong / (pi * duong_kinh)
+# So o duoi tinh cho ong D60. Phan mem may tinh TU DONG gui lai gia tri moi
+# moi khi doi duong kinh:
+#     $/axes/a/steps_per_mm=<gia tri moi>
+# nen khong phai sua file nay. (Lenh do chi doi trong RAM, khong ghi flash.)
+# ============================================================================
+
+name: May cat ong plasma CNC
+board: ESP32 devkit
+
+stepping:
+  engine: RMT
+  idle_ms: 250
+  pulse_us: 4
+  dir_delay_us: 1
+  disable_delay_us: 0
+
+axes:
+  shared_stepper_disable_pin: NO_PIN
+
+  # ---------------------------------------------------------------- TRUC KEO
+  x:
+    # 1600 xung/vong dong co / 5.0 mm moi vong truc keo = 320
+    steps_per_mm: 320.000
+    max_rate_mm_per_min: 3000.000
+    acceleration_mm_per_sec2: 500.000
+    max_travel_mm: 1200.000
+    soft_limits: false
+    homing:
+      cycle: 1
+      positive_direction: false
+      mpos_mm: 0.000
+      feed_mm_per_min: 300.000
+      seek_mm_per_min: 1000.000
+      settle_ms: 250
+
+    # Hai dong co keo ong, chay dong bo tren cung mot truc
+    motor0:
+      limit_neg_pin: gpio.33:low:pu     # cong tac hanh trinh dau X-
+      limit_pos_pin: NO_PIN
+      hard_limits: true
+      pulloff_mm: 2.000
+      stepstick:
+        step_pin: gpio.4
+        direction_pin: gpio.13
+    motor1:
+      limit_neg_pin: NO_PIN
+      # GPIO35 chi vao, KHONG co dien tro keo len ben trong -> phai lap dien
+      # tro 10k len 3V3 o ben ngoai (vi vay khong ghi ":pu" o day)
+      limit_pos_pin: gpio.35:low
+      hard_limits: true
+      pulloff_mm: 2.000
+      stepstick:
+        step_pin: gpio.14
+        direction_pin: gpio.16
+
+  # --------------------------------------------------- TRUC DUMMY (khong lap)
+  # G-code chuan danh chu A cho truc quay, ma FluidNC danh ten truc theo thu tu
+  # X Y Z A B C. Vi vay phai khai bao Y va Z (khong gan dong co) de cho truc
+  # thu tu la A.
+  y:
+    steps_per_mm: 100.000
+    max_rate_mm_per_min: 1000.000
+    acceleration_mm_per_sec2: 100.000
+    motor0:
+      null_motor:
+  z:
+    steps_per_mm: 100.000
+    max_rate_mm_per_min: 1000.000
+    acceleration_mm_per_sec2: 100.000
+    motor0:
+      null_motor:
+
+  # --------------------------------------------------------------- TRUC XOAY
+  a:
+    # 1600 xung/vong / (pi * 60mm) = 8.488 xung tren mot mm cung, cho ong D60.
+    # Phan mem may tinh gui lai so nay moi khi doi duong kinh ong.
+    steps_per_mm: 8.488
+    max_rate_mm_per_min: 3000.000
+    acceleration_mm_per_sec2: 400.000
+    max_travel_mm: 100000.000
+    soft_limits: false
+    motor0:
+      limit_neg_pin: NO_PIN
+      limit_pos_pin: NO_PIN
+      stepstick:
+        step_pin: gpio.25
+        direction_pin: gpio.26
+
+# ---------------------------------------------------------------- MO PLASMA
+# M3 bat mo, M5 tat mo. Thoi gian duc lo do G-code lo bang lenh G4 ngay sau M3,
+# phan mem may tinh tu sinh ra.
+PlasmaSpindle:
+  enable_pin: gpio.19
+  # Neu nguon plasma co ngo bao "hong quang da mo" thi dau vao day. FluidNC se
+  # doi tin hieu nay truoc khi cho chay, va DUNG MAY ngay neu hong quang tat
+  # giua chung - dieu firmware cu khong lam duoc.
+  arc_ok_pin: NO_PIN
+  arc_wait_ms: 1500
+  off_on_alarm: true
+  tool_num: 0
+  speed_map: 0=0% 1=100%
+
+# ------------------------------------------------- BANG DIEU KHIEN TAY 7 NUT
+control:
+  estop_pin: gpio.32:low:pu           # EMG - dung khan cap
+  feed_hold_pin: gpio.22:low:pu       # nut STOP  = tam dung
+  cycle_start_pin: gpio.21:low:pu     # nut START = chay tiep
+  macro0_pin: gpio.23:low:pu          # nut X+  -> nhich ong ra 1 nac
+  macro1_pin: gpio.27:low:pu          # nut X-  -> nhich ong vao 1 nac
+  macro2_pin: gpio.17:low:pu          # nut A+  -> xoay thuan 1 nac
+  macro3_pin: gpio.18:low:pu          # nut A-  -> xoay nghich 1 nac
+
+# Moi lan BAM mot nut di chuyen thi nhich dung mot nac. Sua so sau chu X / A
+# de doi do lon mot nac (mm), sua so sau chu F de doi toc do nhich.
+#
+# Khac voi firmware cu: giu nut KHONG con chay lien tuc nua, vi FluidNC chi
+# bao khi nut duoc BAM, khong bao luc nha ra.
+macros:
+  macro0: $J=G91 G21 X5 F1000
+  macro1: $J=G91 G21 X-5 F1000
+  macro2: $J=G91 G21 A5 F1000
+  macro3: $J=G91 G21 A-5 F1000
+
+start:
+  must_home: false            # may nay khong bat buoc ve goc truoc khi chay
+  deactivate_parking: true
