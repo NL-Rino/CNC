@@ -291,14 +291,20 @@ int main(int argc, char **argv)
         ket_noi_nap_va_chay(k, bai_dai, 6);
         ngu_ms(400);
         ket_noi_tam_dung(k);
+        /* Tam dung chay o luong nen (cho may dung han roi moi tat mo), nen
+         * phai doi chu khong xet ngay */
+        { double han = gio_giay() + 6.0;
+          while (gio_giay() < han && !bat.co_tat_mo) ngu_ms(20); }
         kiem("bam tam dung thi may dung lai", bat.thay_hold);
         kiem("tam dung thi TAT mo cat", bat.co_tat_mo);
 
         /* --- 6. Chay tiep co duc lo lai --- */
         bat.co_duc_lo = 0;
         ket_noi_chay_tiep(k, 300);
+        { double han = gio_giay() + 3.0;
+          while (gio_giay() < han && !bat.co_duc_lo) ngu_ms(20); }
         kiem("chay tiep co cho duc lo truoc", bat.co_duc_lo);
-        ngu_ms(200);
+        ngu_ms(600);   /* cho het thoi gian duc lo roi may moi chay lai */
         kiem("chay tiep xong thi may chay lai",
              ket_noi_trang_thai(k) == MAY_RUN || ket_noi_trang_thai(k) == MAY_IDLE);
 

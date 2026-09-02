@@ -28,6 +28,7 @@ struct KetNoi {
     int so_dong_nap;
     volatile int dang_nap;
     volatile int mo_dang_bi_tat;    /* da chen 0x9E de tat mo luc tam dung */
+    volatile int duc_lo_ms;         /* thoi gian cho duc lo khi chay tiep */
 
     char ten_cong[CO_TEN_CONG];
 };
@@ -468,36 +469,50 @@ void ket_noi_vi_tri(const KetNoi *k, double *x_mm, double *a_do)
 /* ====================================================================== */
 /* DIEU KHIEN MAY                                                         */
 /* ====================================================================== */
-void ket_noi_tam_dung(KetNoi *k)
+/* Tam dung va chay tiep deu phai CHO (cho may dung han, cho duc lo). Neu cho
+ * ngay trong ham thi ben Win32 se chan luon luong giao dien - cua so dong
+ * bang toi 30 giay. Vi vay ca hai viec deu day sang mot luong nen. */
+static void viec_tam_dung(void *tham_so)
 {
-    if (!k) return;
-    ket_noi_gui_thoi_gian_thuc(k, RT_TAM_DUNG);
+    KetNoi *k = (KetNoi *)tham_so;
+    double han = gio_giay() + 3.0;
     /* Cho may dung han roi TAT MO CAT. Neu de mo chay tren ong dang dung yen
      * thi chi vai giay la thung phoi. */
-    {
-        double han = gio_giay() + 3.0;
-        while (gio_giay() < han && k->tt != MAY_HOLD) ngu_ms(20);
-    }
+    while (gio_giay() < han && k->tt != MAY_HOLD) ngu_ms(20);
     if (ket_noi_gui_thoi_gian_thuc(k, RT_TAT_BAT_MO)) {
         k->mo_dang_bi_tat = 1;
         bao_nhat_ky(k, "Da tam dung va tat mo cat.");
     }
 }
 
-void ket_noi_chay_tiep(KetNoi *k, int thoi_gian_duc_lo_ms)
+void ket_noi_tam_dung(KetNoi *k)
 {
     if (!k) return;
-    if (thoi_gian_duc_lo_ms > 0 && k->mo_dang_bi_tat) {
+    ket_noi_gui_thoi_gian_thuc(k, RT_TAM_DUNG);
+    if (!luong_chay(viec_tam_dung, k)) viec_tam_dung(k);   /* cung duong */
+}
+
+static void viec_chay_tiep(void *tham_so)
+{
+    KetNoi *k = (KetNoi *)tham_so;
+    if (k->duc_lo_ms > 0 && k->mo_dang_bi_tat) {
         /* Bat lai mo cat trong khi ong VAN DUNG YEN, cho duc xuyen qua thanh
          * ong roi moi cho chay - neu khong mach cat se bi dut doan. */
         ket_noi_gui_thoi_gian_thuc(k, RT_TAT_BAT_MO);
         k->mo_dang_bi_tat = 0;
         bao_nhat_ky(k, "Bat lai mo cat, cho duc lo %.2f giay...",
-                    thoi_gian_duc_lo_ms / 1000.0);
-        ngu_ms(thoi_gian_duc_lo_ms);
+                    k->duc_lo_ms / 1000.0);
+        ngu_ms(k->duc_lo_ms);
     }
     k->mo_dang_bi_tat = 0;
     ket_noi_gui_thoi_gian_thuc(k, RT_CHAY_TIEP);
+}
+
+void ket_noi_chay_tiep(KetNoi *k, int thoi_gian_duc_lo_ms)
+{
+    if (!k) return;
+    k->duc_lo_ms = thoi_gian_duc_lo_ms;
+    if (!luong_chay(viec_chay_tiep, k)) viec_chay_tiep(k);
 }
 
 void ket_noi_dung_han(KetNoi *k)

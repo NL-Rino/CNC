@@ -2892,7 +2892,12 @@ static LRESULT CALLBACK thu_tuc_chinh(HWND h, UINT tin, WPARAM w, LPARAM l)
          * gui het dong cuoi - dung de nhay bang bang qua lai */
         if (moi == TT_SAN_SANG && ket_noi_dang_nap(g.may)) moi = TT_DANG_NAP;
         if (moi != g.trang_thai) dat_trang_thai(moi);
-        if (tt == MAY_IDLE && !ket_noi_dang_nap(g.may) && g.moc_bat_dau >= 0)
+        /* Chi coi la xong khi may ranh, da gui het bai VA may da bao nhan
+         * du tung dong. Neu chi xet "ranh" thi ngay sau khi bam CHAY may van
+         * con bao Idle mot luc, tien do se nhay ve 100% roi tat dong ho. */
+        if (tt == MAY_IDLE && !ket_noi_dang_nap(g.may) && g.moc_bat_dau >= 0 &&
+            ket_noi_so_dong_ca_bai(g.may) > 0 &&
+            ket_noi_so_dong_da_nhan(g.may) >= ket_noi_so_dong_ca_bai(g.may))
             xong_bai();
         cap_nhat_tien_do();
         return 0;
@@ -3062,7 +3067,7 @@ int WINAPI WinMain(HINSTANCE hi, HINSTANCE truoc, LPSTR dong_lenh, int hien)
 
     ghi("he_thong", "%s - san sang. May chay firmware FluidNC. "
                     "Chon cong COM o 'Tham so...' roi bam Ket noi.", TEN_PHAN_MEM);
-    SetTimer(g.chinh, 1, 2000, NULL);   /* hoi vi tri dinh ky */
+    SetTimer(g.chinh, 1, 300, NULL);    /* ve lai tien do */
     SetTimer(g.chinh, 2, 500, NULL);    /* dong ho thoi gian chay */
 
     while (GetMessageA(&tin, NULL, 0, 0) > 0) {
